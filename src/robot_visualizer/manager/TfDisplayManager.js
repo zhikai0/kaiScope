@@ -197,16 +197,16 @@ export class TfDisplayManager {
     const wantedKeys      = new Set()
     const wantedArrowKeys = new Set()
 
-    // 收集每个 frame 在 fixedFrame 坐标系中的位置，供 arrow 使用
+    // ── 第一遍：计算所有 frame 的绝对位姿，填充 framePositions
+    // 必须在 showAxes 判断之外，确保 arrow 也能拿到位置数据
     const framePositions = new Map()  // frameName -> {x, y, z}
+    const framePoses     = new Map()  // frameName -> { translation, rotation }
 
-    tfTree.forEach((node, frameName) => {
+    tfTree.forEach((_node, frameName) => {
       if (!this.settings.allEnabled) return
       if (this.hiddenFrames.has(frameName)) return
 
-      // 计算 frameName 相对 fixedFrame 的位姿
       let translation, rotation
-
       if (frameName === this.fixedFrame) {
         translation = { x: 0, y: 0, z: 0 }
         rotation    = { x: 0, y: 0, z: 0, w: 1 }
@@ -218,8 +218,11 @@ export class TfDisplayManager {
       }
 
       framePositions.set(frameName, translation)
+      framePoses.set(frameName, { translation, rotation })
+    })
 
-      // ── Axes marker ─────────────────────────────────────────────────
+    // ── 第二遍：根据位姿数据创建/更新 Axes markers
+    framePoses.forEach(({ translation, rotation }, frameName) => {
       if (this.settings.showAxes) {
         const key = `tf_axes_${frameName}`
         wantedKeys.add(key)
@@ -239,7 +242,7 @@ export class TfDisplayManager {
               scale:     this.settings.markerScale,
               label:     frameName,
               showLabel: this.settings.showNames,
-              labelSize: 0.25 * this.settings.markerScale,
+              labelSize: 0.45 * this.settings.markerScale,
             },
           })
           this._activeKeys.add(key)
@@ -283,7 +286,7 @@ export class TfDisplayManager {
             options: {
               scale:   this.settings.markerScale,
               color:   0xffaa00,
-              opacity: 0.7,
+              opacity: 1.0,
             },
           })
           this._activeArrowKeys.add(arrowKey)

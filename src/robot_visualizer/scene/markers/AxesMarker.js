@@ -2,9 +2,8 @@ import * as THREE from 'three'
 import { BaseMarker } from './BaseMarker'
 import { TextMarker } from './TextMarker'
 
-// Reusable objects to avoid per-frame GC
+// Reusable object to avoid per-frame GC
 const _worldPos = new THREE.Vector3()
-const _zOffset  = new THREE.Vector3()
 
 /**
  * AxesMarker — RViz-style coordinate axes marker
@@ -94,15 +93,20 @@ export class AxesMarker extends BaseMarker {
     this._labelSprite = TextMarker.makeSprite(this._labelText, { worldHeight: h })
     this._labelSprite.visible = this._labelVisible
 
-    // Sync label world position before every render.
-    // Offset slightly below the frame origin along world -Y
-    // (world Y = up in Three.js; negative = downward = below the axes cluster)
+    // Position the sprite in rosRoot local space.
+    // Since both this.root and the sprite are children of rosRoot (parent),
+    // this.root.position is already in rosRoot local coords.
+    // We simply copy that position and add a downward offset along rosRoot's
+    // local -Y axis (which is world -Z in ROS Z-up, i.e. below the frame).
+    // No matrix inversion needed — avoids the rotation artifact.
     const scale = this._labelScale
     this._labelSprite.onBeforeRender = () => {
-      this.root.getWorldPosition(_worldPos)
-      _zOffset.set(0, -scale * 0.22, 0)
-      this._labelSprite.position.copy(_worldPos).add(_zOffset)
-        .applyMatrix4(new THREE.Matrix4().copy(parent.matrixWorld).invert())
+      // root.position is in parent (rosRoot) local space — use it directly
+      this._labelSprite.position.set(
+        this.root.position.x,
+        this.root.position.y - scale * 0.22,
+        this.root.position.z,
+      )
     }
 
     parent.add(this._labelSprite)

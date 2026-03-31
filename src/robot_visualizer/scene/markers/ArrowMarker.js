@@ -24,38 +24,18 @@ export class ArrowMarker extends BaseMarker {
 
   // Two-tone colors — shaft warm yellow, head vivid pink
   static SHAFT_COLOR = 0xddcc44   // warm yellow, more saturated
-  static HEAD_COLOR  = 0xee4499   // vivid pink/magenta
+  static HEAD_COLOR  = 0xf04c9e   // vivid pink/magenta
 
   _build() {
-    this._arrowGroup = null
-    this._lastLength = -1
-    this._rebuildArrow(1.0)
-  }
-
-  /**
-   * Rebuild arrow geometry (called when length changes significantly)
-   * @param {number} length  total arrow length (metres)
-   */
-  _rebuildArrow(length) {
-    // Clean up old geometry
-    if (this._arrowGroup) {
-      this._arrowGroup.traverse(o => {
-        o.geometry?.dispose()
-        if (Array.isArray(o.material)) o.material.forEach(m => m.dispose())
-        else o.material?.dispose()
-      })
-      this.root.remove(this._arrowGroup)
-      this._arrowGroup = null
-    }
+    this._arrowGroup = new THREE.Group()
 
     const scale   = this.options.scale   ?? 1.0
     const opacity = this.options.opacity ?? 1.0
     const segs    = 14
 
-    const r        = 0.022 * scale
-    const headLen  = length * 0.2           // head is exactly 1/5 of total
-    const shaftLen = Math.max(length - headLen, 0.001)
-    const headR    = r * 2.8
+    this._radius  = 0.022 * scale
+    this._headLen = 0.5 * scale         // keep arrowhead size fixed
+    this._headR   = this._radius * 3.5
 
     const isTransp = opacity < 1.0
 
@@ -64,41 +44,47 @@ export class ArrowMarker extends BaseMarker {
     const shaftMat = new THREE.MeshStandardMaterial({
       color:             new THREE.Color(ArrowMarker.SHAFT_COLOR),
       emissive:          new THREE.Color(ArrowMarker.SHAFT_COLOR),
-      emissiveIntensity: 0.08,
-      metalness:         0.15,
-      roughness:         0.55,
+      emissiveIntensity: 0.0,
+      metalness:         0.45,
+      roughness:         0.4,
       transparent:       isTransp,
       opacity,
-      depthWrite:        !isTransp,
+      depthWrite:        true,
     })
 
     // ── Head material: vivid pink ────────────────────────────────────
     const headMat = new THREE.MeshStandardMaterial({
       color:             new THREE.Color(ArrowMarker.HEAD_COLOR),
       emissive:          new THREE.Color(ArrowMarker.HEAD_COLOR),
-      emissiveIntensity: 0.08,
-      metalness:         0.2,
-      roughness:         0.45,
+      emissiveIntensity: 0.0,
+      metalness:         0.5,
+      roughness:         0.35,
       transparent:       isTransp,
       opacity,
-      depthWrite:        !isTransp,
+      depthWrite:        true,
     })
 
-    // Shaft: along +Y (CylinderGeometry default)
-    const shaftGeo = new THREE.CylinderGeometry(r, r, shaftLen, segs)
-    const shaft    = new THREE.Mesh(shaftGeo, shaftMat)
-    shaft.castShadow = true
-    shaft.position.y = shaftLen / 2
+    // Shaft geometry length = 1; use scale.y to fit distance
+    const shaftGeo = new THREE.CylinderGeometry(this._radius, this._radius, 1, segs)
+    this._shaft = new THREE.Mesh(shaftGeo, shaftMat)
+    this._shaft.castShadow = true
+    this._arrowGroup.add(this._shaft)
 
-    // Cone arrowhead: tip points in +Y direction toward parent
-    const coneGeo = new THREE.ConeGeometry(headR, headLen, segs)
-    const cone    = new THREE.Mesh(coneGeo, headMat)
-    cone.castShadow = true
-    cone.position.y = shaftLen + headLen / 2
+    // Cone head geometry keeps constant size
+    const coneGeo = new THREE.ConeGeometry(this._headR, this._headLen, segs)
+    this._head = new THREE.Mesh(coneGeo, headMat)
+    this._head.castShadow = true
+    this._arrowGroup.add(this._head)
 
-    this._arrowGroup = new THREE.Group()
-    this._arrowGroup.add(shaft, cone)
     this.root.add(this._arrowGroup)
+    this._setLength(1.0)
+  }
+
+  _setLength(length) {
+    const shaftLen = Math.max(length - this._headLen, 0.001)
+    this._shaft.scale.set(1, shaftLen, 1)
+    this._shaft.position.y = shaftLen / 2
+    this._head.position.y  = shaftLen + this._headLen / 2
   }
 
   /**
@@ -127,11 +113,7 @@ export class ArrowMarker extends BaseMarker {
     }
     this.root.visible = true
 
-    // Rebuild geometry only when length changes noticeably
-    if (Math.abs(length - this._lastLength) > 0.001) {
-      this._lastLength = length
-      this._rebuildArrow(length)
-    }
+    this._setLength(length)
 
     // Rotate root so +Y axis points toward parent node
     const up = new THREE.Vector3(0, 1, 0)

@@ -8,21 +8,6 @@ import { getDisplayManager } from '../../manager/DisplayManager'
 import { getTfDisplayManager } from '../../manager/TfDisplayManager'
 import './LeftPanel.css'
 
-// ── Fallback topics ──────────────────────────────────────────────────────
-const FALLBACK_TOPICS = [
-  { name:'/planned_path',      type:'nav_msgs/Path' },
-  { name:'/map',               type:'nav_msgs/OccupancyGrid' },
-  { name:'/scan',              type:'sensor_msgs/LaserScan' },
-  { name:'/tf',                type:'tf2_msgs/TFMessage' },
-  { name:'/tf_static',         type:'tf2_msgs/TFMessage' },
-  { name:'/robot_description', type:'std_msgs/String' },
-  { name:'/pointcloud',        type:'sensor_msgs/PointCloud2' },
-  { name:'/camera/image_raw',  type:'sensor_msgs/Image' },
-  { name:'/odom',              type:'nav_msgs/Odometry' },
-  { name:'/cmd_vel',           type:'geometry_msgs/Twist' },
-  { name:'/imu',               type:'sensor_msgs/Imu' },
-]
-
 const DISPLAY_SCHEMA_FILTER = {
   path:       ['nav_msgs/msg/Path','nav_msgs/Path'],
   map:        ['nav_msgs/msg/OccupancyGrid','nav_msgs/OccupancyGrid'],
@@ -123,19 +108,16 @@ function PColor({ label, defaultHex='#ffffff', indent=0, onChange }) {
 // ── TopicSelect: combobox with type-filtered dropdown ─────────────────────
 function TopicSelect({ value, onChange, liveTopics, allowedDisplayType }) {
   const topics = (() => {
-    if (liveTopics&&liveTopics.length>0) {
-      if (allowedDisplayType&&DISPLAY_SCHEMA_FILTER[allowedDisplayType]) {
-        const allowed = DISPLAY_SCHEMA_FILTER[allowedDisplayType]
-        const f = liveTopics.filter(c => allowed.includes(c.schemaName))
-        return f.map(c=>c.topic)
-      }
-      return liveTopics.map(c=>c.topic)
-    }
-    if (allowedDisplayType&&DISPLAY_SCHEMA_FILTER[allowedDisplayType]) {
+    if (!liveTopics || liveTopics.length === 0) return []
+
+    if (allowedDisplayType && DISPLAY_SCHEMA_FILTER[allowedDisplayType]) {
       const allowed = DISPLAY_SCHEMA_FILTER[allowedDisplayType]
-      return FALLBACK_TOPICS.filter(t=>allowed.includes(t.type)).map(t=>t.name)
+      return liveTopics
+        .filter(c => allowed.includes(c.schemaName))
+        .map(c => c.topic)
     }
-    return FALLBACK_TOPICS.map(t=>t.name)
+
+    return liveTopics.map(c => c.topic)
   })()
 
   const [input,    setInput]    = useState(value||'')
@@ -186,7 +168,7 @@ const TYPE_ICONS = {
   global:'⚙️', default:'📦',
 }
 
-function DNode({ label, checked, onChange, status, selected, onSelect, typeId, children, noChk }) {
+function DNode({ label, checked, onChange, selected, onSelect, typeId, children, noChk }) {
   const [open, setOpen] = useState(false)
   const has = Boolean(children)
 
@@ -488,7 +470,7 @@ function TfFrameTree() {
 // ── Add Modal ────────────────────────────────────────────────────────────
 function AddModal({ onAdd, onClose, liveChannels }) {
   const [tab, setTab] = useState('type')
-  const topics = liveChannels&&liveChannels.length>0 ? liveChannels : FALLBACK_TOPICS.map(t=>({topic:t.name,schemaName:t.type}))
+  const topics = liveChannels && liveChannels.length > 0 ? liveChannels : []
   return (
     <div className="modal-back" onClick={onClose}>
       <div className="modal-box" onClick={e=>e.stopPropagation()}>
@@ -506,7 +488,7 @@ function AddModal({ onAdd, onClose, liveChannels }) {
             const dt=DISPLAY_TYPES.find(d=>d.id===tid)||DISPLAY_TYPES[DISPLAY_TYPES.length-1]
             return (<div key={ch.topic} className="modal-item" onClick={()=>{onAdd({...dt, topicOverride:ch.topic});onClose()}}><span className="modal-icon">{dt.icon}</span><div><div className="modal-name">{ch.topic}</div><div className="modal-desc">{ch.schemaName||''}</div></div></div>)
           })}
-          {tab==='topic'&&topics.length===0&&<div className="modal-empty">No topics — connect Foxglove.</div>}
+          {tab==='topic'&&topics.length===0&&<div className="modal-empty">No live topics — connect WebSocket backend.</div>}
         </div>
       </div>
     </div>
@@ -584,7 +566,6 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   const resetScene    = useSimStore(s => s.resetScene)
   const mapOpacity    = useMapStore(s => s.mapOpacity)
   const setMapOpacity = useMapStore(s => s.setMapOpacity)
-  const mapEnabled    = useMapStore(s => s.mapEnabled)
   const setMapEnabled = useMapStore(s => s.setMapEnabled)
   const mapZoom       = useMapStore(s => s.zoom)
   const setMapZoom    = useMapStore(s => s.setZoom)

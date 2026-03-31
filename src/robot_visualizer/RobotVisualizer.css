@@ -153,7 +153,18 @@ select option {
   background: var(--glass-bg);
 }
 
+/* 对齐占位单元：仅用于布局，不可见 */
+.pcell.pcell-empty {
+  background: transparent;
+  border: none;
+  pointer-events: none;
+}
+.pcell.pcell-empty .pcell-body {
+  background: transparent;
+}
+
 .pcell-hdr {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;

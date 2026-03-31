@@ -40,6 +40,14 @@ export class DisplayManager extends EventBus {
 
     // Unsubscribe handles from RosDataManager: topic -> fn
     this._unsubFns = new Map()
+
+    // Cache latest robot_description payload per display uid.
+    // Used to replay URDF into newly mounted 3D scenes.
+    this._lastRobotModel = new Map()
+
+    SceneCommandBus.on('scene:ready', () => {
+      this._replayRobotModelsToScene()
+    })
   }
 
   // ── Connect to data layer ────────────────────────────────────────────
@@ -56,7 +64,7 @@ export class DisplayManager extends EventBus {
     }
     this._dataMgr = mgr
     // Re-subscribe all active displays
-    this._displays.forEach((disp, uid) => {
+    this._displays.forEach((disp) => {
       if (disp.checked && disp.topic) this._ensureSubscribed(disp.topic)
     })
   }
@@ -218,10 +226,26 @@ export class DisplayManager extends EventBus {
     const urdfText = typeof msg === 'string' ? msg : (msg?.data ?? '')
     console.log(`[DisplayManager] _handleRobotModelMsg: urdfText length=${urdfText?.length}, hasRobot=${urdfText?.includes('<robot')}`)
     if (!urdfText || !urdfText.includes('<robot')) return
+
+    this._lastRobotModel.set(disp.uid, urdfText)
+
     SceneCommandBus.dispatch({
       type:     'scene:urdf:load',
       uid:      disp.uid,
       urdfText,
+    })
+  }
+
+  _replayRobotModelsToScene() {
+    this._displays.forEach((disp, uid) => {
+      if (disp.id !== 'robotmodel' || !disp.checked) return
+      const urdfText = this._lastRobotModel.get(uid)
+      if (!urdfText) return
+      SceneCommandBus.dispatch({
+        type: 'scene:urdf:load',
+        uid,
+        urdfText,
+      })
     })
   }
 
