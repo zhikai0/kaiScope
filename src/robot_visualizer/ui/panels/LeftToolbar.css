@@ -1,0 +1,58 @@
+.left-toolbar {
+  width: var(--toolbar-w);
+  background: var(--ui-bg2);
+  border-right: 1px solid var(--ui-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.toolbar-top { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 0 5px; }
+
+.tb-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tb-btn:hover {
+  background: var(--ui-bg3);
+  color: var(--text-1);
+  border-color: var(--ui-border);
+}
+
+.tb-btn.active {
+  background: var(--accent-dim);
+  border-color: rgba(0,191,255,0.35);
+  color: var(--accent);
+}
+
+.tb-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.tb-icon svg { width: 18px; height: 18px; }
+
+.tb-label {
+  font-size: 7px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+}

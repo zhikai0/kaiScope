@@ -1,0 +1,232 @@
+/* VirtualJoystick overlay */
+.vj-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 0 2.5rem 3rem;
+}
+
+/* 单个摇杆底座 */
+.vj-base {
+  position: relative;
+  width: 9rem;
+  height: 9rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow:
+    0 4px 24px rgba(0,0,0,0.35),
+    0 0 0 1px rgba(255,255,255,0.04) inset;
+  pointer-events: all;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.vj-base:active { border-color: rgba(255,159,10,0.5); }
+
+/* 摇杆环 */
+.vj-ring {
+  position: absolute;
+  inset: 18%;
+  border-radius: 50%;
+  border: 1px dashed rgba(255,255,255,0.10);
+  pointer-events: none;
+}
+
+/* 方向文字 */
+.vj-dir {
+  position: absolute;
+  font-size: 0.55rem;
+  color: rgba(255,255,255,0.30);
+  pointer-events: none;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.03em;
+}
+.vj-dir-t { top: 6%;  left: 50%; transform: translateX(-50%); }
+.vj-dir-b { bottom: 6%; left: 50%; transform: translateX(-50%); }
+.vj-dir-l { left: 6%;  top: 50%; transform: translateY(-50%); }
+.vj-dir-r { right: 6%; top: 50%; transform: translateY(-50%); }
+
+/* 摇杆球 */
+.vj-knob {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2.8rem;
+  height: 2.8rem;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 35%,
+    rgba(255,255,255,0.30),
+    rgba(255,159,10,0.55) 60%,
+    rgba(180,80,0,0.75)
+  );
+  border: 1px solid rgba(255,200,80,0.35);
+  box-shadow: 0 2px 12px rgba(255,159,10,0.30), 0 1px 3px rgba(0,0,0,0.4);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* 标签 */
+.vj-label {
+  position: absolute;
+  bottom: -1.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  color: rgba(255,255,255,0.35);
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  pointer-events: none;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── 配置面板背景遮罩 ── */
+.vj-config-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.35);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* 配置面板 */
+.vj-config-panel {
+  background: rgba(18, 18, 24, 0.92);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 1rem;
+  padding: 1.25rem 1.5rem 1.5rem;
+  min-width: 16rem;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.06) inset;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.vj-cfg-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.vj-cfg-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgba(255,255,255,0.85);
+  letter-spacing: 0.06em;
+  font-family: 'JetBrains Mono', monospace;
+}
+.vj-cfg-close {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 0.4rem;
+  color: rgba(255,255,255,0.5);
+  font-size: 0.75rem;
+  width: 1.5rem; height: 1.5rem;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.vj-cfg-close:hover { background: rgba(255,60,60,0.25); color: #fff; border-color: rgba(255,60,60,0.4); }
+
+.vj-cfg-body { display: flex; flex-direction: column; gap: 0.55rem; }
+
+.vj-cfg-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.vj-cfg-lbl {
+  font-size: 0.7rem;
+  color: rgba(255,255,255,0.55);
+  white-space: nowrap;
+  min-width: 5rem;
+}
+.vj-cfg-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  transition: border-color 0.15s;
+}
+.vj-cfg-input-wrap:focus-within { border-color: rgba(255,159,10,0.5); }
+.vj-cfg-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: rgba(255,255,255,0.85);
+  font-size: 0.72rem;
+  width: 4rem;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+}
+/* 隐藏原生上下箭头 */
+.vj-cfg-input::-webkit-outer-spin-button,
+.vj-cfg-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.vj-cfg-input[type=number] {
+  -moz-appearance: textfield;
+}
+.vj-cfg-unit {
+  font-size: 0.6rem;
+  color: rgba(255,159,10,0.7);
+  white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── 确认 / 取消 按钮 ── */
+.vj-cfg-footer {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 1rem;
+  justify-content: flex-end;
+}
+.vj-cfg-btn {
+  padding: 0.32rem 1rem;
+  border-radius: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+.vj-cfg-cancel {
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(255,255,255,0.12);
+  color: rgba(255,255,255,0.55);
+}
+.vj-cfg-cancel:hover {
+  background: rgba(255,255,255,0.13);
+  color: rgba(255,255,255,0.85);
+}
+.vj-cfg-confirm {
+  background: rgba(255,159,10,0.18);
+  border-color: rgba(255,159,10,0.55);
+  color: #ff9f0a;
+  box-shadow: 0 0 8px rgba(255,159,10,0.15);
+}
+.vj-cfg-confirm:hover {
+  background: rgba(255,159,10,0.30);
+  box-shadow: 0 0 14px rgba(255,159,10,0.30);
+  color: #ffb83a;
+}

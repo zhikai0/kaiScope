@@ -1,0 +1,337 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ════════════════════════════════════════════════════════════════════════
+   Design System & Global Styles
+   ════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Apple Glass Design System — 颜色和主题变量 */
+  --bg-primary:   #000000;
+  --glass-bg:     rgba(20,20,20,0.55);
+  --glass-bg2:    rgba(28,28,28,0.75);
+  --glass-border: rgba(255,255,255,0.12);
+  --glass-shadow: 0 8px 32px rgba(0,0,0,0.45);
+  --blur:         blur(24px) saturate(180%);
+
+  /* 文本颜色层级 */
+  --text-0:   #ffffff;
+  --text-1:   #ebebf5;
+  --text-2:   #aeaeb2;
+  --text-3:   #636366;
+
+  /* 强调色和状态色 */
+  --accent:      #0a84ff;
+  --accent-hi:   #409cff;
+  --accent-dim:  rgba(10,132,255,0.15);
+  --green:   #34c759;
+  --orange:  #ff9f0a;
+  --red:     #ff453a;
+  --spring:  cubic-bezier(0.4,0,0.2,1);
+  --font-ui:   -apple-system, 'SF Pro Display', 'Inter', sans-serif;/* 字体样式 */
+  --fs-ui:     0.8rem;                                              /* 字体大小*/
+
+}
+
+/* 全局重置 */
+* { margin:0; padding:0; box-sizing:border-box; }
+
+/* 根元素样式 */
+html, body, #root {
+  width:100%; height:100%;
+  overflow:hidden;
+  background: var(--bg-primary);
+  color: var(--text-0);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 按钮全局样式 */
+button { font-family: var(--font-ui); cursor: pointer; border: none; outline: none; }
+
+/* 滚动条样式 */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+/* Range 输入框样式 */
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%; height: 2px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 1px; outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(10,132,255,0.5);
+}
+
+/* Checkbox 样式 */
+input[type=checkbox] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border: 1.5px solid rgba(255,255,255,0.3);
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+input[type=checkbox]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+input[type=checkbox]:checked::after {
+  content: '✓';
+  position: absolute;
+  top: -1px; left: 1px;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* Select 下拉框样式 */
+select {
+  background: #1c1c1e;
+  border: 0.5px solid rgba(255,255,255,0.18);
+  border-radius: 6px;
+  color: rgba(235,235,245,0.9);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  padding: 3px 6px;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  color-scheme: dark;
+}
+select:focus { border-color: var(--accent); }
+select option {
+  background: #1c1c1e;
+  color: rgba(235,235,245,0.9);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Panel Layout System
+   ════════════════════════════════════════════════════════════════════════ */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+  background: var(--bg-0);
+  overflow: hidden;
+}
+
+.panel-layout {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  gap: 0;
+}
+
+.panel-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.pcell {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 0.5px solid var(--glass-border);
+  background: var(--glass-bg);
+}
+
+.pcell-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 0.5px solid var(--glass-border);
+  flex-shrink: 0;
+  background: rgba(255,255,255,0.02);
+}
+
+.pcell-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-0);
+  letter-spacing: 0.04em;
+}
+
+.pcell-actions {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.pcell-btn {
+  width: 1.4rem;
+  height: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.05);
+  border: 0.5px solid rgba(255,255,255,0.10);
+  border-radius: 0.3rem;
+  color: var(--text-2);
+  font-size: 0.7rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.pcell-btn:hover {
+  background: rgba(255,255,255,0.12);
+  color: var(--text-0);
+}
+
+.pcell-btn.close:hover {
+  background: rgba(255,69,58,0.25);
+  border-color: rgba(255,69,58,0.4);
+  color: var(--red);
+}
+
+.pcell-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.2rem;
+  background: var(--glass-bg);
+  border: 0.5px solid var(--glass-border);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  z-index: 1000;
+  min-width: 10rem;
+}
+
+.pcell-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  font-size: 0.7rem;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.pcell-menu-item:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--text-0);
+}
+
+.pcell-menu-item.active {
+  background: rgba(10,132,255,0.2);
+  color: var(--accent);
+}
+
+.pcell-body {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.pcell-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  color: var(--text-3);
+}
+
+.pp-icon {
+  font-size: 2rem;
+  opacity: 0.5;
+}
+
+.pp-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.pp-sub {
+  font-size: 0.65rem;
+  opacity: 0.6;
+}
+
+.resize-h {
+  width: 0.5px;
+  height: 100%;
+  background: var(--glass-border);
+  cursor: col-resize;
+  transition: background 0.2s;
+}
+
+.resize-h:hover {
+  background: var(--accent);
+}
+
+.resize-v {
+  height: 0.5px;
+  width: 100%;
+  background: var(--glass-border);
+  cursor: row-resize;
+  transition: background 0.2s;
+}
+
+.resize-v:hover {
+  background: var(--accent);
+}
+
+
+
+/* ── Bottom view switcher (single panel mode) ───────────────────────── */
+.view-sw {
+  position: fixed;
+  bottom: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.2rem;
+  background: var(--glass-bg);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  border: 0.5px solid var(--glass-border);
+  border-radius: 0.875rem;
+  box-shadow: var(--glass-shadow);
+  z-index: 300;
+}
+.vsw {
+  padding: 0.25rem 0.875rem;
+  height: 1.875rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.65rem;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 0.68rem; font-weight: 500;
+  letter-spacing: 0.05em;
+  transition: all 0.18s var(--spring);
+  cursor: pointer;
+}
+.vsw:hover { color: var(--text-0); background: rgba(255,255,255,0.07); }
+.vsw.on {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0.1rem 0.5rem rgba(10,132,255,0.4);
+}
+.vsw-split-wrap { position: relative; }

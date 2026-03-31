@@ -1,0 +1,402 @@
+/* ══════════════════════════════════════════════════════════════════════
+   LeftPanel 样式 — 唯一来源
+   控件统一用：.p-select .p-num .p-rgb .p-swatch-* .p-topic-* .pr-row .pr-lbl .pr-ctrl
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* ── 侧边收起按钮（面板隐藏时显示的小拉手） ──────────────────────────── */
+.lp-show {
+  position: fixed; left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 1.2rem; height: 3.5rem;
+  background: var(--glass-bg);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 0.5px solid var(--glass-border); border-left: none;
+  border-radius: 0 0.7rem 0.7rem 0;
+  color: var(--text-2); font-size: 0.55rem;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; z-index: 300; opacity: 0.7;
+  transition: all 0.3s var(--spring);
+}
+.lp-show:hover {
+  opacity: 1; color: var(--text-0);
+  background: rgba(255,255,255,0.1);
+  transform: translateY(-50%) translateX(0.15rem);
+}
+.lp-show.hidden { display: none; }
+
+/* ── 禁止拖拽时意外文本选中（input/select/textarea 不受影响） ──────── */
+.left-panel, .left-panel * {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.left-panel input,
+.left-panel select,
+.left-panel textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ── 面板外壳 ────────────────────────────────────────────────────────── */
+.left-panel {
+  position: fixed;
+  top: 5.5rem; left: 0; bottom: 3.4rem;
+  width: clamp(14rem, 24vw, 22rem);
+  background: var(--glass-bg);
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  border: 0.5px solid var(--glass-border);
+  border-radius: 0 0.8rem 0.8rem 0;
+  box-shadow: 0.25rem 0 1.5rem rgba(0,0,0,0.45);
+  display: flex; flex-direction: column;
+  z-index: 200; overflow: hidden;
+  transition: transform 0.35s var(--spring);
+}
+.left-panel::before {
+  content: ''; position: absolute;
+  top: 0; left: 0; right: 0; height: 0.5px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  pointer-events: none;
+}
+.left-panel.closed { transform: translateX(-100%); }
+
+/* ── 顶部标题栏 ──────────────────────────────────────────────────────── */
+.lp-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 0.5px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.lp-title { font-size: 0.85rem; font-weight: 600; color: var(--text-0); }
+.lp-hbtn {
+  width: 1.4rem; height: 1.4rem;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.06);
+  border: 0.5px solid var(--glass-border); border-radius: 0.4rem;
+  color: var(--text-2); font-size: 0.8rem; transition: all 0.2s;
+}
+.lp-hbtn:hover { background: rgba(255,255,255,0.12); color: var(--text-0); }
+
+/* ── 滚动内容区 ──────────────────────────────────────────────────────── */
+.lp-body { flex: 1; overflow-y: auto; }
+.lp-body::-webkit-scrollbar { width: 0.25rem; }
+.lp-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 0.15rem; }
+/* 空状态提示文字（无 display 时 / TF 无帧时） */
+.lp-empty {
+  padding: 1.5rem 1rem; text-align: center;
+  color: var(--text-3); font-size: 0.75rem; line-height: 1.5;
+}
+
+/* ── 底部操作栏（Add / Reset / Delete） ─────────────────────────────── */
+.lp-actions {
+  display: flex; gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border-top: 0.5px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.lp-act-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 0.3rem;
+  padding: 0.4rem 0.2rem;
+  background: rgba(255,255,255,0.05);
+  border: 0.5px solid rgba(255,255,255,0.10); border-radius: 0.5rem;
+  color: var(--text-2); font-size: 0.7rem; font-weight: 500;
+  transition: all 0.18s var(--spring);
+}
+.lp-act-btn:hover { background: rgba(255,255,255,0.10); color: var(--text-0); }
+/* 删除按钮：未选中时灰显禁用 */
+.lp-act-btn.del { opacity: 0.28; cursor: not-allowed; }
+.lp-act-btn.del.enabled { opacity: 1; cursor: pointer; }
+.lp-act-btn.del.enabled:hover {
+  background: rgba(255,69,58,0.12); border-color: rgba(255,69,58,0.3); color: var(--red);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   DISPLAY NODE 行（Grid / Path / TF 等每一条目）
+   双击展开子参数，单击高亮选中
+   ════════════════════════════════════════════════════════════════════════ */
+.di-wrap { }
+.di-row {
+  display: flex; align-items: center; gap: 0.32rem;
+  min-height: 1.9rem; padding: 0 0.6rem;
+  border-bottom: 0.5px solid rgba(255,255,255,0.04);
+  cursor: pointer; transition: background 0.15s;
+}
+.di-row:hover { background: rgba(255,255,255,0.05); }
+/* 展开状态背景 */
+.di-row.exp   { background: rgba(255,255,255,0.04); }
+/* 选中高亮 — 调高亮度以便深色背景下清晰可见，想改颜色/透明度改这里 */
+.di-row.sel   { background: rgba(10,132,255,0.28); border-left: 0.15rem solid var(--accent); }
+
+/* 折叠箭头：收起时向右，展开时向下 */
+.di-arr {
+  font-size: 1.1rem; color: var(--text-1);
+  width: 1rem; text-align: center; flex-shrink: 0;
+  transition: transform 0.1s ease, color 0.15s;
+  transform: rotate(-120deg);
+  cursor: pointer;
+}
+.di-row.exp .di-arr { transform: rotate(0deg); }
+.di-arr:hover,
+.di-row:hover .di-arr { color: var(--text-0); }
+/* 无子项时箭头隐藏 */
+.di-arr.inv { opacity: 0; pointer-events: none; }
+
+/* 类型图标（emoji） */
+.di-type-icon { font-size: 0.7rem; width: 1rem; text-align: center; flex-shrink: 0; }
+/* 行标签文字 — 字体大小由 index.css 的 --fs-ui 统一控制 */
+.di-lbl { flex: 1; font-size: var(--fs-ui); font-weight: 500; color: var(--text-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 选中时标签变蓝 */
+.di-row.sel .di-lbl { color: var(--accent); }
+/* 子参数缩进线 */
+.di-children { border-left: 0.5px solid rgba(255,255,255,0.08); }
+
+/* 勾选框（每行右侧，控制该 display 是否显示） */
+.di-chk-box {
+  margin-left: auto; flex-shrink: 0;
+  width: 1rem; height: 1rem;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(160,160,164,0.4); border-radius: 0.2rem;
+  background: rgba(255,255,255,0.04);
+  font-size: 0.62rem; color: transparent;
+  cursor: pointer; transition: all 0.15s; user-select: none;
+}
+/* 勾选激活态 */
+.di-chk-box.chk-on {
+  background: rgba(10,132,255,0.8); border-color: var(--accent);
+  color: #fff; font-weight: 700;
+}
+
+/* 状态小圆点（warn=橙，err=红，ok 不显示） */
+.sdot { width: 0.42rem; height: 0.42rem; border-radius: 50%; flex-shrink: 0; margin-left: 0.15rem; }
+.sdot-ok   { display: none; }
+.sdot-warn { background: var(--orange); }
+.sdot-err  { background: var(--red); }
+
+/* ════════════════════════════════════════════════════════════════════════
+   PARAM ROW — 参数行（key | value 两栏布局）
+   pr-lbl 固定宽度保证所有行值列左对齐
+   indent prop 控制缩进层级
+   ════════════════════════════════════════════════════════════════════════ */
+.pr-row {
+  display: flex; align-items: center; gap: 0.32rem;
+  padding: 0 0.6rem;
+  min-height: 1.9rem;
+  border-bottom: 0.5px solid rgba(255,255,255,0.04);
+  box-sizing: border-box;
+}
+/* 参数名（左列），固定 5rem 宽，想加宽改这里 */
+.pr-lbl {
+  font-size: var(--fs-ui); font-weight: 500; color: var(--text-0);
+  width: 5rem; flex-shrink: 0;
+  white-space: nowrap; text-align: left;
+}
+/* 参数值容器（右列） */
+.pr-ctrl {
+  flex: 1; display: flex; align-items: center; gap: 0.3rem; min-width: 0;
+}
+/* 纯文本值显示（只读，如 Position 的坐标） */
+.pr-txt  { font-size: var(--fs-ui); font-weight: 500; color: var(--text-0); white-space: nowrap; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   原子控件 — 所有交互控件共享同一高度/背景/边框/圆角
+   想改控件整体外观，改下面的 CSS 变量即可
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+  --ctrl-h:   1.5rem;               /* 控件高度 */
+  --ctrl-bg:  rgba(44,44,50,0.92);  /* 控件背景 */
+  --ctrl-bd:  rgba(255,255,255,0.13); /* 控件边框 */
+  --ctrl-r:   0.3rem;               /* 圆角 */
+  --ctrl-fs:  0.7rem;               /* 控件内字体大小 */
+}
+
+/* ── 下拉选择框 ──────────────────────────────────────────────────────── */
+.p-select {
+  flex: 1; min-width: 0;
+  height: var(--ctrl-h);
+  background: var(--ctrl-bg);
+  border: 0.5px solid var(--ctrl-bd); border-radius: var(--ctrl-r);
+  color: rgba(235,235,245,0.95);
+  font-family: var(--font-ui); font-size: var(--ctrl-fs);
+  padding: 0 1.5rem 0 0.4rem;
+  outline: none; cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23aeaeb2' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.4rem center;
+  transition: border-color 0.15s;
+}
+.p-select option { background: #252528; color: rgba(235,235,245,0.95); }
+.p-select:focus  { border-color: var(--accent); }
+
+/* ── 数字输入框 ──────────────────────────────────────────────────────── */
+.p-num {
+  flex: 1; min-width: 0;
+  height: var(--ctrl-h);
+  background: var(--ctrl-bg);
+  border: 0.5px solid var(--ctrl-bd); border-radius: var(--ctrl-r);
+  color: rgba(235,235,245,0.95);
+  font-family: var(--font-mono); font-size: var(--ctrl-fs);
+  padding: 0 0.4rem;
+  outline: none; transition: border-color 0.15s;
+}
+.p-num:focus       { border-color: var(--accent); }
+.p-num::placeholder { color: var(--text-3); }
+/* 隐藏原生上下箭头 */
+.p-num::-webkit-outer-spin-button,
+.p-num::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.p-num[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* ── RGB 文本输入（颜色值手动输入） ─────────────────────────────────── */
+.p-rgb {
+  flex: 1; min-width: 0;
+  height: var(--ctrl-h);
+  background: var(--ctrl-bg);
+  border: 0.5px solid var(--ctrl-bd); border-radius: var(--ctrl-r);
+  color: rgba(235,235,245,0.95);
+  font-family: var(--font-mono); font-size: 0.68rem;
+  padding: 0 0.4rem;
+  outline: none; transition: border-color 0.15s;
+}
+.p-rgb:focus        { border-color: var(--accent); }
+.p-rgb::placeholder { color: var(--text-3); }
+
+/* ── 颜色色块（点击打开系统取色器） ─────────────────────────────────── */
+.p-swatch-wrap {
+  position: relative; flex-shrink: 0;
+  width: var(--ctrl-h); height: var(--ctrl-h);
+  cursor: pointer;
+}
+.p-swatch-input {
+  position: absolute; inset: 0; opacity: 0;
+  width: 100%; height: 100%; cursor: pointer;
+}
+.p-swatch-box {
+  width: var(--ctrl-h); height: var(--ctrl-h);
+  border-radius: var(--ctrl-r);
+  border: 0.5px solid rgba(255,255,255,0.18);
+  display: block; pointer-events: none;
+}
+
+/* ── Topic 输入框（带下拉过滤列表） ─────────────────────────────────── */
+.p-topic-wrap { position: relative; flex: 1; min-width: 0; }
+.p-topic-row {
+  display: flex; align-items: center;
+  height: var(--ctrl-h);
+  background: var(--ctrl-bg);
+  border: 0.5px solid var(--ctrl-bd); border-radius: var(--ctrl-r);
+  overflow: hidden; transition: border-color 0.15s;
+}
+.p-topic-row:focus-within { border-color: var(--accent); }
+/* topic 不存在时边框变橙色警告 */
+.p-topic-row.warn         { border-color: var(--orange); }
+.p-topic-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: rgba(235,235,245,0.95); font-family: var(--font-mono);
+  font-size: 0.68rem; padding: 0 0.4rem; height: 100%; min-width: 0;
+}
+.p-topic-input::placeholder { color: var(--text-3); }
+.p-topic-warn  { color: var(--orange); font-size: 0.72rem; padding: 0 0.2rem; flex-shrink: 0; }
+.p-topic-arrow {
+  background: transparent; border: none;
+  border-left: 0.5px solid rgba(255,255,255,0.1);
+  color: var(--text-2); font-size: 0.75rem; padding: 0 0.4rem;
+  cursor: pointer; height: 100%; display: flex; align-items: center;
+  transition: color 0.12s, background 0.12s; flex-shrink: 0;
+}
+.p-topic-arrow:hover { color: var(--text-0); background: rgba(255,255,255,0.06); }
+/* 下拉候选列表 */
+.p-topic-dropdown {
+  position: absolute; top: calc(100% + 0.2rem); left: 0; right: 0;
+  background: rgba(22,22,26,0.98);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  border: 0.5px solid rgba(255,255,255,0.14); border-radius: 0.45rem;
+  box-shadow: 0 0.5rem 1.5rem rgba(0,0,0,0.6);
+  max-height: 12rem; overflow-y: auto; z-index: 9999;
+  animation: pTopicIn 0.12s ease;
+}
+@keyframes pTopicIn { from{opacity:0;transform:translateY(-0.2rem)} to{opacity:1;transform:none} }
+.p-topic-dropdown::-webkit-scrollbar { width: 0.2rem; }
+.p-topic-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 0.1rem; }
+.p-topic-opt {
+  padding: 0.28rem 0.55rem; font-family: var(--font-mono); font-size: 0.68rem;
+  color: rgba(235,235,245,0.85); cursor: pointer; transition: background 0.1s;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.p-topic-opt:hover  { background: rgba(255,255,255,0.07); }
+/* 当前选中的 topic 高亮 */
+.p-topic-opt.active { background: var(--accent-dim); color: var(--accent); font-weight: 500; }
+.p-topic-empty { padding: 0.4rem 0.55rem; font-size: 0.65rem; color: var(--text-3); font-style: italic; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   ADD DISPLAY 弹窗
+   ════════════════════════════════════════════════════════════════════════ */
+/* 半透明遮罩背景 */
+.modal-back {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(0.4rem); -webkit-backdrop-filter: blur(0.4rem);
+  z-index: 1000; display: flex; align-items: center; justify-content: center;
+  animation: fadeIn 0.2s ease; padding: 1rem;
+}
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+.modal-box {
+  width: min(26rem, 100%); max-height: 70vh;
+  background: rgba(26,26,30,0.98);
+  border: 0.5px solid var(--glass-border); border-radius: 1rem;
+  box-shadow: 0 1.5rem 4rem rgba(0,0,0,0.65);
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: slideUp 0.22s var(--spring);
+}
+@keyframes slideUp { from{opacity:0;transform:translateY(0.6rem)} to{opacity:1;transform:none} }
+.modal-hdr {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.8rem 1rem;
+  border-bottom: 0.5px solid var(--glass-border); flex-shrink: 0;
+}
+.modal-title { font-size: 0.875rem; font-weight: 600; color: var(--text-0); }
+.modal-close {
+  width: 1.5rem; height: 1.5rem;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.07); border: 0.5px solid var(--glass-border);
+  border-radius: 0.4rem; color: var(--text-2); font-size: 0.75rem; transition: all 0.18s;
+}
+.modal-close:hover { background: rgba(255,255,255,0.14); color: var(--text-0); }
+/* 弹窗顶部 Tab 切换（By Type / By Topic） */
+.modal-tabs { display: flex; border-bottom: 0.5px solid var(--glass-border); padding: 0 1rem; flex-shrink: 0; }
+.modal-tab {
+  padding: 0.55rem 0.9rem;
+  background: transparent; border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-2); font-size: 0.73rem; cursor: pointer;
+  transition: all 0.18s; position: relative; top: 1px;
+}
+.modal-tab:hover { color: var(--text-0); }
+/* 激活 tab 下划线 */
+.modal-tab.on    { color: var(--accent); border-bottom-color: var(--accent); }
+.modal-body { flex: 1; overflow-y: auto; padding: 0.6rem; }
+/* 每个可添加的 display 条目卡片 */
+.modal-item {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.6rem 0.8rem;
+  background: rgba(255,255,255,0.03);
+  border: 0.5px solid var(--glass-border); border-radius: 0.6rem;
+  cursor: pointer; transition: all 0.18s var(--spring); margin-bottom: 0.35rem;
+}
+.modal-item:hover { background: rgba(255,255,255,0.08); border-color: var(--accent); transform: translateX(0.1rem); }
+.modal-icon { font-size: 1.1rem; flex-shrink: 0; }
+.modal-name { font-size: 0.78rem; font-weight: 500; color: var(--text-0); }
+.modal-desc { font-size: 0.66rem; color: var(--text-2); margin-top: 0.08rem; }
+/* LIVE 实时话题标记 */
+.modal-live-badge { display: inline-block; margin-left: 0.3rem; font-size: 0.55rem; font-weight: 700; letter-spacing: 0.06em; color: var(--green); vertical-align: middle; }
+.modal-empty { padding: 1.2rem 1rem; text-align: center; font-size: 0.72rem; color: var(--text-3); line-height: 1.6; }
+
+/* ── 移动端适配 ──────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .left-panel { width: 82vw; }
+  .lp-act-btn { font-size: 0.65rem; padding: 0.4rem 0.1rem; }
+}
+ 
