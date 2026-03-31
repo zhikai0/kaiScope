@@ -2,25 +2,29 @@ import * as THREE from 'three'
 import { BaseMarker } from './BaseMarker'
 
 /**
- * ArrowMarker — TF 父子关系箭头 Marker
+ * ArrowMarker — TF parent-child relationship arrow
  *
- * 绘制一条从子坐标系原点指向父坐标系原点的箭头（圆柱杆 + 锥形头）。
- * 颜色为半透明橙黄色（与 TF axes 颜色协调）。
+ * Visual design:
+ *  - Shaft:     pale yellow  #ffffcc  (thin cylinder)
+ *  - Arrowhead: pink         #ff99cc  (cone, ~1/5 of total length)
+ *  - Both parts use MeshStandardMaterial for PBR lighting
  *
- * 使用场景：TfDisplayManager 中，showArrows 开启时，
- * 为每对 parent→child 关系创建一个 ArrowMarker。
+ * Used by TfDisplayManager when showArrows is enabled.
  *
  * options:
- *  scale      {number}  箭头缩放比例，控制粗细，默认 1.0
- *  color      {number}  颜色（十六进制），默认 0xffaa00
- *  opacity    {number}  透明度，默认 0.75
+ *  scale      {number}  thickness scale factor, default 1.0
+ *  opacity    {number}  opacity, default 0.92
  */
 export class ArrowMarker extends BaseMarker {
   static get TYPE() { return 'arrow' }
 
   static get ROS_MSG_TYPES() {
-    return ['__arrow__']  // 内部专用，不映射到 ROS topic
+    return ['__arrow__']  // internal only, not mapped to ROS topic
   }
+
+  // Two-tone colors — shaft warm yellow, head vivid pink
+  static SHAFT_COLOR = 0xddcc44   // warm yellow, more saturated
+  static HEAD_COLOR  = 0xee4499   // vivid pink/magenta
 
   _build() {
     this._arrowGroup = null
@@ -29,11 +33,11 @@ export class ArrowMarker extends BaseMarker {
   }
 
   /**
-   * 重建箭头几何体（长度改变时调用）
-   * @param {number} length  箭头总长（米）
+   * Rebuild arrow geometry (called when length changes significantly)
+   * @param {number} length  total arrow length (metres)
    */
   _rebuildArrow(length) {
-    // 清理旧几何体
+    // Clean up old geometry
     if (this._arrowGroup) {
       this._arrowGroup.traverse(o => {
         o.geometry?.dispose()
@@ -45,30 +49,51 @@ export class ArrowMarker extends BaseMarker {
     }
 
     const scale   = this.options.scale   ?? 1.0
-    const color   = this.options.color   ?? 0xffaa00
-    const opacity = this.options.opacity ?? 0.75
+    const opacity = this.options.opacity ?? 1.0
+    const segs    = 14
 
-    const r        = 0.025 * scale
-    const headLen  = Math.min(length * 0.3, 0.25 * scale)
+    const r        = 0.022 * scale
+    const headLen  = length * 0.2           // head is exactly 1/5 of total
     const shaftLen = Math.max(length - headLen, 0.001)
-    const headR    = r * 2.5
-    const segs     = 12
+    const headR    = r * 2.8
 
-    const mat = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
+    const isTransp = opacity < 1.0
+
+    // ── Shaft material: warm yellow ──────────────────────────────────
+    // Low emissiveIntensity — let lighting do the work, avoid colour washout
+    const shaftMat = new THREE.MeshStandardMaterial({
+      color:             new THREE.Color(ArrowMarker.SHAFT_COLOR),
+      emissive:          new THREE.Color(ArrowMarker.SHAFT_COLOR),
+      emissiveIntensity: 0.08,
+      metalness:         0.15,
+      roughness:         0.55,
+      transparent:       isTransp,
       opacity,
-      depthWrite:  false,
+      depthWrite:        !isTransp,
     })
 
-    // 杆：沿 +Y 方向（CylinderGeometry 默认 Y 轴）
+    // ── Head material: vivid pink ────────────────────────────────────
+    const headMat = new THREE.MeshStandardMaterial({
+      color:             new THREE.Color(ArrowMarker.HEAD_COLOR),
+      emissive:          new THREE.Color(ArrowMarker.HEAD_COLOR),
+      emissiveIntensity: 0.08,
+      metalness:         0.2,
+      roughness:         0.45,
+      transparent:       isTransp,
+      opacity,
+      depthWrite:        !isTransp,
+    })
+
+    // Shaft: along +Y (CylinderGeometry default)
     const shaftGeo = new THREE.CylinderGeometry(r, r, shaftLen, segs)
-    const shaft    = new THREE.Mesh(shaftGeo, mat)
+    const shaft    = new THREE.Mesh(shaftGeo, shaftMat)
+    shaft.castShadow = true
     shaft.position.y = shaftLen / 2
 
-    // 锥头：指向 +Y 末端（父节点方向）
+    // Cone arrowhead: tip points in +Y direction toward parent
     const coneGeo = new THREE.ConeGeometry(headR, headLen, segs)
-    const cone    = new THREE.Mesh(coneGeo, mat)
+    const cone    = new THREE.Mesh(coneGeo, headMat)
+    cone.castShadow = true
     cone.position.y = shaftLen + headLen / 2
 
     this._arrowGroup = new THREE.Group()
@@ -77,8 +102,8 @@ export class ArrowMarker extends BaseMarker {
   }
 
   /**
-   * 更新箭头两端点（在 fixedFrame / ROS 坐标系中）
-   * 箭头从 childPos 出发，指向 parentPos
+   * Update arrow endpoints (in fixedFrame / ROS coordinate space).
+   * Arrow originates at childPos and points toward parentPos.
    *
    * @param {{ childPos: {x,y,z}, parentPos: {x,y,z} }} data
    */
@@ -90,7 +115,7 @@ export class ArrowMarker extends BaseMarker {
     const from = new THREE.Vector3(childPos.x,  childPos.y,  childPos.z)
     const to   = new THREE.Vector3(parentPos.x, parentPos.y, parentPos.z)
 
-    // root 放在子节点世界位置
+    // root sits at child world position
     this.root.position.copy(from)
 
     const dir    = new THREE.Vector3().subVectors(to, from)
@@ -102,14 +127,13 @@ export class ArrowMarker extends BaseMarker {
     }
     this.root.visible = true
 
-    // 长度变化时重建几何体
+    // Rebuild geometry only when length changes noticeably
     if (Math.abs(length - this._lastLength) > 0.001) {
       this._lastLength = length
       this._rebuildArrow(length)
     }
 
-    // 旋转 root 使 +Y 轴朝向父节点
-    // Three.js CylinderGeometry 默认 Y-up，需旋转到 dir 方向
+    // Rotate root so +Y axis points toward parent node
     const up = new THREE.Vector3(0, 1, 0)
     dir.normalize()
     this.root.quaternion.setFromUnitVectors(up, dir)
