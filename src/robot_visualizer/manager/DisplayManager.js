@@ -48,6 +48,9 @@ export class DisplayManager extends EventBus {
     SceneCommandBus.on('scene:ready', () => {
       this._replayRobotModelsToScene()
     })
+    SceneCommandBus.on('scene:reset', () => {
+      this._replayRobotModelsToScene()
+    })
   }
 
   // ── Connect to data layer ────────────────────────────────────────────
@@ -65,7 +68,7 @@ export class DisplayManager extends EventBus {
     this._dataMgr = mgr
     // Re-subscribe all active displays
     this._displays.forEach((disp) => {
-      if (disp.checked && disp.topic) this._ensureSubscribed(disp.topic)
+      if (disp.checked && disp.topic) this._ensureSubscribed(disp.topic, disp.uid)
     })
   }
 
@@ -81,8 +84,13 @@ export class DisplayManager extends EventBus {
       checked: display.checked !== false,
       params:  display.params || {},
     })
-    if (display.checked !== false && display.topic) {
-      this._ensureSubscribed(display.topic, display.uid)
+    if (display.checked !== false) {
+      if (display.topic) this._ensureSubscribed(display.topic, display.uid)
+      
+      // 如果是 robotmodel 且已有缓存，立即重传一次 URDF
+      if (display.id === 'robotmodel' && this._lastRobotModel.has(display.uid)) {
+        this._replayRobotModelsToScene()
+      }
     }
     this.emit('displays', { displays: this._getDisplayList() })
   }
@@ -96,6 +104,18 @@ export class DisplayManager extends EventBus {
     this._displays.delete(uid)
     if (disp.topic) this._maybeUnsubscribe(disp.topic, uid)
     this._dataCallbacks.delete(uid)
+
+    // ── Cleanup scene resources (Generic & Specific) ────────────────
+    // 1. Remove any markers associated with this display UID
+    SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `path_${uid}` })
+    SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `marker_${uid}` })
+
+    // 2. Specific cleanup based on display type ID
+    if (disp.id === 'robotmodel') {
+      SceneCommandBus.dispatch({ type: 'scene:urdf:dispose', uid })
+      this._lastRobotModel.delete(uid)
+    }
+
     this.emit('displays', { displays: this._getDisplayList() })
   }
 

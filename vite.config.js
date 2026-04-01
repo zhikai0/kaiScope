@@ -57,12 +57,4 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 8766,
   },
-  build: {
-    rollupOptions: {
-      external: [
-        '@foxglove/rosmsg',
-        '@foxglove/rosmsg2-serialization',
-      ],
-    },
-  },
 })

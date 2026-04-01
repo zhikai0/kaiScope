@@ -8,3 +8,17 @@
 - TF 坐标系树可视化（Axes、Labels、Arrows）
 - 卫星地图底图（Cesium）
 - 机器人 URDF 
+
+
+## Quick start
+```bash
+# install
+sudo apt install ros-${ROS_DISTRO}-foxglove-bridge
+# run bridge
+ros2 run foxglove_bridge foxglove_bridge
+# run container(该方式启动，robot的mesh加载会有问题)
+docker run -it --rm \
+  --name kaiscope \
+  -p 8766:80 \
+  crpi-etx06pm0ontyst6p.cn-shanghai.personal.cr.aliyuncs.com/ros-humble/kaiscope:arm64
+```

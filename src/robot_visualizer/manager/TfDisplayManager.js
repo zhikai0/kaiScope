@@ -58,12 +58,14 @@ export class TfDisplayManager {
     }
     getTfManager().on('update', this._onTfUpdate)
 
-    // 场景就绪后再次同步（Viewport3D handlers 注册完毕后）
-    this._onSceneReady = () => {
+    // 场景就绪或重置后再次同步
+    this._onSceneReset = () => {
       this._activeKeys.clear()
+      this._activeArrowKeys.clear()
       this._sync()
     }
-    this._unregSceneReady = SceneCommandBus.register('scene:ready', this._onSceneReady)
+    this._unregSceneReady = SceneCommandBus.register('scene:ready', this._onSceneReset)
+    this._unregSceneReset = SceneCommandBus.register('scene:reset', this._onSceneReset)
 
     // 首次尝试自动设置根帧
     this._autoSetFixedFrame()
@@ -162,6 +164,7 @@ export class TfDisplayManager {
   destroy() {
     getTfManager().off('update', this._onTfUpdate)
     if (this._unregSceneReady) this._unregSceneReady()
+    if (this._unregSceneReset) this._unregSceneReset()
     this._fixedFrameListeners.clear()
     this._clearAll()
   }

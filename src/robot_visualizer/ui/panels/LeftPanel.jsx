@@ -574,24 +574,47 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   const latitude      = useMapStore(s => s.latitude)
   const setLatitude   = useMapStore(s => s.setLatitude)
 
+  const handleReset = useCallback(() => {
+    resetScene()
+    // 通知 3D 场景彻底清理资源并复位相机
+    SceneCommandBus.dispatch({ type: 'scene:reset' })
+  }, [resetScene])
+
   const handleAdd    = useCallback((dt) => {
     const uid = `${dt.id}-${Date.now()}`
     const initParams = dt.topicOverride ? { topic: dt.topicOverride } : {}
     const newDisp = {uid,...dt,checked:true,params:initParams}
     setDisplays(prev => [...prev, newDisp])
-    // 通知 DisplayManager 新增 display
+
+    // 1. 通知 DisplayManager 新增 display
     getDisplayManager().addDisplay(newDisp)
-    // 如果有 topicOverride，立即通知 DisplayManager 订阅
+
+    // 2. 如果是 TF 或 Map，确保其对应的全局管理器/Store 被启用
+    if (dt.id === 'tf') getTfDisplayManager().setEnabled(true)
+    if (dt.id === 'map') setMapEnabled(true)
+
+    // 3. 如果有 topicOverride，立即通知 DisplayManager 订阅
     if (dt.topicOverride) getDisplayManager().updateParam(uid, 'topic', dt.topicOverride)
     if (dt.id==='image'&&onImageAdd) onImageAdd(dt.topicOverride||'/camera/image_raw')
-  }, [onImageAdd])
+  }, [onImageAdd, setMapEnabled])
   const handleDelete = useCallback(() => {
     if (!selectedUid) return
     const d = displays.find(x => x.uid === selectedUid)
     if (d&&d.noDel) return
+
+    // 1. Notify Manager to cleanup topics and markers
     getDisplayManager().removeDisplay(selectedUid)
-    setDisplays(prev=>prev.filter(d=>d.uid!==selectedUid)); setSelectedUid(null)
-  }, [selectedUid, displays])
+
+    // 2. Update UI state + aggregate global toggles by remaining checked displays
+    const nextDisplays = displays.filter(item => item.uid !== selectedUid)
+    setDisplays(nextDisplays)
+    setSelectedUid(null)
+
+    const tfEnabled = nextDisplays.some(item => item.id === 'tf' && item.checked)
+    const mapEnabledNext = nextDisplays.some(item => item.id === 'map' && item.checked)
+    getTfDisplayManager().setEnabled(tfEnabled)
+    setMapEnabled(mapEnabledNext)
+  }, [selectedUid, displays, setMapEnabled])
   const handleRename = useCallback(() => {
     if (!selectedUid) return
     const d = displays.find(x => x.uid === selectedUid)
@@ -604,17 +627,22 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     setRenaming(false)
   }, [selectedUid, renameVal])
   const toggleCheck  = useCallback((uid,val) => {
-    setDisplays(prev=>prev.map(d=>d.uid===uid?{...d,checked:val}:d))
+    const nextDisplays = displays.map(d => d.uid===uid?{...d,checked:val}:d)
+    setDisplays(nextDisplays)
+
     SceneCommandBus.dispatch({ type:'scene:display:toggle', uid, visible:val })
     const disp = displays.find(d => d.uid === uid)
     if (!disp) return
+
     // 通知 DisplayManager 勾选状态变化
     getDisplayManager().toggleDisplay(uid, val)
-    // TF display 整体启用/禁用
-    if (disp.id === 'tf') getTfDisplayManager().setEnabled(val)
-    // Map display 启用/禁用
-    if (disp.id === 'map') setMapEnabled(val)
-  }, [displays])
+
+    // TF/Map 为全局单例显示，按同类“至少一个勾选”聚合启用状态
+    const tfEnabled = nextDisplays.some(item => item.id === 'tf' && item.checked)
+    const mapEnabledNext = nextDisplays.some(item => item.id === 'map' && item.checked)
+    getTfDisplayManager().setEnabled(tfEnabled)
+    setMapEnabled(mapEnabledNext)
+  }, [displays, setMapEnabled])
 
   const renderParams = (d) => {
     if (d.id==='global') return (
@@ -711,7 +739,7 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
             : <>
                 <button className="lp-act-btn add" onClick={()=>setShowModal(true)}>Add</button>
                 <button className="lp-act-btn" onClick={handleRename} disabled={!selectedUid}>Rename</button>
-                <button className="lp-act-btn" onClick={resetScene}>Reset</button>
+                <button className="lp-act-btn" onClick={handleReset}>Reset</button>
                 <button className={`lp-act-btn del ${selectedUid&&!displays.find(x=>x.uid===selectedUid)?.noDel?'enabled':''}`} onClick={handleDelete} disabled={!selectedUid||!!displays.find(x=>x.uid===selectedUid)?.noDel}>Delete</button>
               </>
           }

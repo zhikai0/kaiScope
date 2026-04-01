@@ -258,6 +258,26 @@ export default function Viewport3D() {
       }),
 
       // ── Marker 系统 ─────────────────────────────────────────────────
+      SceneCommandBus.register('scene:reset', () => {
+        console.log('[Viewport3D] scene:reset triggered')
+        // 1. Clear all markers
+        refs.current.markerManager?.dispose?.()
+        
+        // 2. Clear built-in groups
+        if (refs.current.trajGroup) refs.current.trajGroup.clear()
+        if (refs.current.histGroup) refs.current.histGroup.clear()
+
+        // 3. Clear URDF models
+        if (refs.current._urdfModels) {
+          refs.current._urdfModels.forEach(m => m.dispose())
+          refs.current._urdfModels.clear()
+        }
+        if (refs.current._urdfCache) refs.current._urdfCache.clear()
+
+        // 4. Reset camera to default
+        refs.current.cameraViews?.setMode('orbit')
+      }),
+
       // 创建 Marker：{ type, key, rosMsgType, options }
       // 例：SceneCommandBus.dispatch({ type:'scene:marker:set', markerType:'axes',
       //       key:'robot_pose', rosMsgType:'geometry_msgs/msg/PoseStamped', options:{scale:0.5} })
