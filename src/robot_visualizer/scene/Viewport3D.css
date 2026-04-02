@@ -34,3 +34,28 @@
 
 .vp-hud-bl { display: none; }
 .vp-hud-tr { top: 10px; right: 10px; }
+
+.vp-view-select-wrap {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 20;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--glass-bg);
+  border: 0.5px solid var(--glass-border);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
+.vp-view-select {
+  min-width: 124px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 0.5px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: var(--text-0);
+  font-size: 11px;
+  outline: none;
+}

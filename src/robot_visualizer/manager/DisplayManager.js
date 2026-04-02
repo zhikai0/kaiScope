@@ -108,6 +108,7 @@ export class DisplayManager extends EventBus {
     // ── Cleanup scene resources (Generic & Specific) ────────────────
     // 1. Remove any markers associated with this display UID
     SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `path_${uid}` })
+    SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `pointcloud_${uid}` })
     SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `marker_${uid}` })
 
     // 2. Specific cleanup based on display type ID
@@ -133,6 +134,7 @@ export class DisplayManager extends EventBus {
     // 取消勾选时清除场景中的 marker
     if (!checked) {
       SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `path_${uid}` })
+      SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `pointcloud_${uid}` })
       // robotmodel 取消勾选时销毁 URDF 模型
       if (disp.id === 'robotmodel') {
         SceneCommandBus.dispatch({ type: 'scene:urdf:dispose', uid })
@@ -154,6 +156,7 @@ export class DisplayManager extends EventBus {
       disp.topic = value
       // topic 变更时先清除旧 marker
       SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `path_${uid}` })
+      SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `pointcloud_${uid}` })
       if (disp.checked) {
         if (prevTopic) this._maybeUnsubscribe(prevTopic, uid)
         if (value) this._ensureSubscribed(value, uid)
@@ -165,6 +168,11 @@ export class DisplayManager extends EventBus {
     if (disp.id === 'path' && (key === 'color' || key === 'alpha' || key === 'lineStyle' || key === 'lineWidth')) {
       const markerKey = `path_${uid}`
       SceneCommandBus.dispatch({ type: 'scene:marker:style', key: markerKey, style: { [key]: value } })
+    }
+    if (disp.id === 'pointcloud' && (key === 'color' || key === 'alpha' || key === 'pointSize')) {
+      const markerKey = `pointcloud_${uid}`
+      const styleKey = key === 'pointSize' ? 'size' : key
+      SceneCommandBus.dispatch({ type: 'scene:marker:style', key: markerKey, style: { [styleKey]: value } })
     }
     this.emit('paramChanged', { uid, key, value, displayId: disp.id })
   }
@@ -212,6 +220,10 @@ export class DisplayManager extends EventBus {
         // ── Path rendering pipeline ──────────────────────────────────
         if (disp.id === 'path' || disp.id === 'history') {
           this._handlePathMsg(msg, disp)
+        }
+        // ── PointCloud rendering pipeline ───────────────────────────
+        if (disp.id === 'pointcloud') {
+          this._handlePointCloudMsg(msg, disp)
         }
         // ── RobotModel rendering pipeline ────────────────────────────
         if (disp.id === 'robotmodel') {
@@ -266,6 +278,32 @@ export class DisplayManager extends EventBus {
         uid,
         urdfText,
       })
+    })
+  }
+
+  _handlePointCloudMsg(msg, disp) {
+    const key = `pointcloud_${disp.uid}`
+    if (!msg) {
+      SceneCommandBus.dispatch({ type: 'scene:marker:remove', key })
+      return
+    }
+
+    SceneCommandBus.dispatch({
+      type: 'scene:marker:set',
+      markerType: 'pointcloud',
+      key,
+      rosMsgType: disp.rosMsgType || 'sensor_msgs/msg/PointCloud2',
+      options: {
+        color: disp.params?.color || '#66ccff',
+        size: disp.params?.pointSize ?? 0.04,
+        alpha: disp.params?.alpha ?? 1,
+      },
+    })
+
+    SceneCommandBus.dispatch({
+      type: 'scene:marker:update',
+      key,
+      data: msg,
     })
   }
 

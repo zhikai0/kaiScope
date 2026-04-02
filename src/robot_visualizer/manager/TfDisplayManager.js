@@ -50,10 +50,13 @@ export class TfDisplayManager {
     /** @type {Set<function>} fixedFrame 变化监听器 */
     this._fixedFrameListeners = new Set()
 
+    /** @type {boolean} 是否由用户手动指定 fixedFrame */
+    this._manualFixedFrame = false
+
     // 绑定 TfManager 更新事件
     this._onTfUpdate = () => {
-      // 若 fixedFrame 还未设置，取树根帧
-      if (!this.fixedFrame) this._autoSetFixedFrame()
+      // 未手动指定时，持续跟踪 TF 树最高根帧
+      if (!this._manualFixedFrame) this._autoSetFixedFrame()
       this._sync()
     }
     getTfManager().on('update', this._onTfUpdate)
@@ -81,15 +84,55 @@ export class TfDisplayManager {
   _autoSetFixedFrame() {
     const tfTree = getTfManager().getTfTree()
     if (!tfTree.size) return
-    // 根帧：parentFrame 为 null
-    for (const [name, node] of tfTree) {
+
+    const nodes = Array.from(tfTree.entries())
+    const childrenMap = new Map()
+    const roots = []
+
+    nodes.forEach(([name, node]) => {
+      if (!childrenMap.has(name)) childrenMap.set(name, [])
       if (node.parentFrame === null) {
-        if (this.fixedFrame !== name) {
-          this.fixedFrame = name
-          this._emitFixedFrame(name)
-        }
-        return
+        roots.push(name)
+      } else {
+        if (!childrenMap.has(node.parentFrame)) childrenMap.set(node.parentFrame, [])
+        childrenMap.get(node.parentFrame).push(name)
       }
+    })
+
+    if (roots.length === 0) return
+
+    const countDesc = (root) => {
+      let count = 0
+      const q = [root]
+      const visited = new Set([root])
+      while (q.length) {
+        const cur = q.shift()
+        count += 1
+        const ch = childrenMap.get(cur) || []
+        ch.forEach(c => {
+          if (!visited.has(c)) {
+            visited.add(c)
+            q.push(c)
+          }
+        })
+      }
+      return count
+    }
+
+    let bestRoot = roots[0]
+    let bestCount = countDesc(bestRoot)
+    for (let i = 1; i < roots.length; i++) {
+      const r = roots[i]
+      const c = countDesc(r)
+      if (c > bestCount) {
+        bestRoot = r
+        bestCount = c
+      }
+    }
+
+    if (this.fixedFrame !== bestRoot) {
+      this.fixedFrame = bestRoot
+      this._emitFixedFrame(bestRoot)
     }
   }
 
@@ -117,7 +160,8 @@ export class TfDisplayManager {
    * 设置固定坐标系（来自 GlobalOptions 的 fixedFrame 选择）
    * @param {string} frame
    */
-  setFixedFrame(frame) {
+  setFixedFrame(frame, { manual = true } = {}) {
+    if (manual) this._manualFixedFrame = true
     this.fixedFrame = frame || this.fixedFrame
     this._emitFixedFrame(this.fixedFrame)
     this._sync()

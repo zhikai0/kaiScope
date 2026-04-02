@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CameraViews } from './views/CameraViews.js'
@@ -9,12 +9,19 @@ import { MarkerManager } from './markers'
 import { createRosRoot } from './CoordSystem'
 import { MapLayer } from './map/MapLayer'
 import { getTfManager } from '../data/TfManager'
+import { getRosDataManager } from '../data/getRosDataManager'
 import { getTfDisplayManager } from '../manager/TfDisplayManager'
 import './Viewport3D.css'
 
-export default function Viewport3D() {
+let PERSISTED_CAMERA_POS = null
+let PERSISTED_CAMERA_TARGET = null
+let PERSISTED_VIEW_MODE = 'orbit'
+let PERSISTED_AT = 0
+
+export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete }) {
   const mountRef = useRef(null)
   const refs     = useRef({})
+  const [viewMode, setViewMode] = useState(PERSISTED_VIEW_MODE)
 
   const trajectory    = useSimStore(s => s.trajectory)
   const historyPath   = useSimStore(s => s.historyPath)
@@ -49,12 +56,22 @@ export default function Viewport3D() {
     camera.lookAt(0, 0, 0)
 
     const controls = new OrbitControls(camera, renderer.domElement)
-    controls.enableDamping = true
-    controls.dampingFactor = 0.06
+    controls.enableDamping = false
+    controls.dampingFactor = 0.03
     controls.minDistance = 0.5
     controls.maxDistance = 5000      // 最远 5km
     controls.maxPolarAngle = Math.PI / 2 - 0.01  // 严格不低于 XY 平面
-    controls.zoomSpeed = 1.2
+    controls.zoomSpeed = 1.0
+    controls.rotateSpeed = 0.7
+    controls.panSpeed = 0.7
+
+    const now = Date.now()
+    const persistedFresh = now - PERSISTED_AT < 10_000
+    if (persistedFresh && PERSISTED_CAMERA_POS && PERSISTED_CAMERA_TARGET) {
+      camera.position.copy(PERSISTED_CAMERA_POS)
+      controls.target.copy(PERSISTED_CAMERA_TARGET)
+      controls.update()
+    }
 
     // Lights
     scene.add(new THREE.AmbientLight(0xdde8ff, 1.0))
@@ -101,15 +118,55 @@ export default function Viewport3D() {
 
     // ── CameraViews ──────────────────────────────────────────────────
     const cameraViews = new CameraViews(camera, controls, scene)
+    const viewTargetProxy = new THREE.Object3D()
+    rosRoot.add(viewTargetProxy)
+    const viewFollowHz = 18
 
-    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews }
+    const getPrimaryRobotRoot = () => {
+      const models = refs.current._urdfModels
+      if (!models || models.size === 0) return null
+      for (const m of models.values()) {
+        if (m?.isLoaded && m?._root) return m._root
+      }
+      return null
+    }
+
+    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot }
 
     // ── Animation loop ───────────────────────────────────────────────────
+    const clock = new THREE.Clock()
     let animId
     const animate = () => {
       animId = requestAnimationFrame(animate)
-      controls.update()
+      const dt = Math.min(clock.getDelta(), 0.1)
+      const baseFollowAlpha = 1 - Math.exp(-viewFollowHz * dt)
+      const mode = refs.current.cameraViews?.mode
+      const followAlpha = mode === 'thirdpersonfollower' ? 1.0 : baseFollowAlpha
+      const tfMgr = getTfManager()
+      const fixedFrame = getTfDisplayManager().fixedFrame || 'map'
+      const viewTargetLink = refs.current._viewTargetLink || 'base_link'
+      const viewTargetProxy = refs.current._viewTargetProxy
+      if (viewTargetProxy) {
+        const tf = tfMgr.lookupTransform(fixedFrame, viewTargetLink)
+        if (tf) {
+          const { translation: t, rotation: q } = tf
+          const targetPos = new THREE.Vector3(t.x, t.y, t.z)
+          const targetQuat = new THREE.Quaternion(q.x, q.y, q.z, q.w)
+          if (!refs.current._viewTargetInit) {
+            viewTargetProxy.position.copy(targetPos)
+            viewTargetProxy.quaternion.copy(targetQuat)
+            refs.current._viewTargetInit = true
+          } else {
+            viewTargetProxy.position.lerp(targetPos, followAlpha)
+            viewTargetProxy.quaternion.slerp(targetQuat, followAlpha)
+          }
+          refs.current.cameraViews?.setFollowTarget(viewTargetProxy)
+        }
+      }
       refs.current.cameraViews?.update()
+      if (refs.current.cameraViews?.mode === 'orbit' && controls.enabled) {
+        controls.update()
+      }
       // 9宫格地图：根据 rosRoot 的当前位置驱动瓦片滚动
       const rr = refs.current.rosRoot
       if (rr && refs.current.mapLayer) {
@@ -276,6 +333,8 @@ export default function Viewport3D() {
 
         // 4. Reset camera to default
         refs.current.cameraViews?.setMode('orbit')
+        refs.current._viewMode = 'orbit'
+        setViewMode('orbit')
       }),
 
       // 创建 Marker：{ type, key, rosMsgType, options }
@@ -362,6 +421,9 @@ export default function Viewport3D() {
     setTimeout(() => SceneCommandBus.dispatch({ type: 'scene:ready' }), 0)
 
     return () => {
+      PERSISTED_CAMERA_POS = refs.current.camera?.position?.clone?.() || null
+      PERSISTED_CAMERA_TARGET = refs.current.controls?.target?.clone?.() || null
+      PERSISTED_AT = Date.now()
       if (animId) cancelAnimationFrame(animId)
       ro.disconnect()
       if (el && fpsEl && el.contains(fpsEl)) el.removeChild(fpsEl)
@@ -394,6 +456,182 @@ export default function Viewport3D() {
     mapLayer.setOpacity(mapOpacity)
   }, [mapOpacity, mapEnabled])
 
+  // ── Camera view mode ───────────────────────────────────────────────
+  useEffect(() => {
+    PERSISTED_VIEW_MODE = viewMode
+  }, [viewMode])
+
+  useEffect(() => {
+    const { cameraViews } = refs.current
+    if (!cameraViews) return
+
+    refs.current._viewMode = viewMode
+    refs.current._viewTargetLink = 'base_link'
+    refs.current._viewTargetInit = false
+
+    if (viewMode === 'follower') {
+      cameraViews.setMode('thirdpersonfollower', {
+        targetFrame: 'base_link',
+        smooth: 0.2,
+        allowControl: true,
+        useTargetOrientation: true,
+      })
+    } else if (viewMode === 'topdown') {
+      cameraViews.setMode('topdown', {
+        targetFrame: 'base_link',
+        offset: { x: 0, y: 0, z: 50 },
+      })
+    } else {
+      cameraViews.setMode('orbit', {
+        targetFrame: 'base_link',
+        offset: { x: -30, y: 0, z: 30 },
+        smooth: 0.2,
+      })
+    }
+  }, [viewMode])
+
+  // ── 2D Goal Pose interaction ────────────────────────────────────────
+  useEffect(() => {
+    const { renderer, camera, rosRoot, controls } = refs.current
+    if (!renderer || !camera || !rosRoot || !controls) return
+
+    const dom = renderer.domElement
+    const raycaster = new THREE.Raycaster()
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+    const mouse = new THREE.Vector2()
+
+    let dragging = false
+    let startRos = null
+    const prevControlsEnabled = controls.enabled
+
+    const toRosGround = (ev) => {
+      const rect = dom.getBoundingClientRect()
+      mouse.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1
+      mouse.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(mouse, camera)
+      const hit = new THREE.Vector3()
+      if (!raycaster.ray.intersectPlane(plane, hit)) return null
+      return rosRoot.worldToLocal(hit.clone())
+    }
+
+    const updateDragPreview = (fromRos, toRos) => {
+      const dir = toRos.clone().sub(fromRos)
+      if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0)
+      dir.normalize()
+
+      // 固定尺寸：箭身 2m + 箭头 0.5m
+      const fixedShaftLength = 2.0
+      const fixedHeadLength = 0.5
+      const fixedTip = fromRos.clone().add(dir.multiplyScalar(fixedShaftLength + fixedHeadLength))
+
+      // 可独立调节：箭身半径 / 箭头半径 / 箭头长度
+      const shaftRadius = 0.1
+      const headRadius = 0.2
+
+      SceneCommandBus.dispatch({
+        type: 'scene:marker:set',
+        markerType: 'arrow',
+        key: '__goal_pose_preview__',
+        rosMsgType: '__arrow__',
+        options: {
+          scale: 1.0,
+          shaftColor: '#19ff00',
+          headColor: '#19ff00',
+          opacity: 1.0,
+          fixedShaftLength,
+          fixedHeadLength,
+          shaftRadius,
+          headRadius,
+          headLength: fixedHeadLength,
+        },
+      })
+      SceneCommandBus.dispatch({
+        type: 'scene:marker:update',
+        key: '__goal_pose_preview__',
+        data: {
+          childPos: { x: fromRos.x, y: fromRos.y, z: 0.02 },
+          parentPos: { x: fixedTip.x, y: fixedTip.y, z: 0.02 },
+        },
+      })
+    }
+
+    const cleanupPreview = () => {
+      SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: '__goal_pose_preview__' })
+    }
+
+    const onDown = (ev) => {
+      if (!goalPoseMode) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      const p = toRosGround(ev)
+      if (!p) return
+      dragging = true
+      startRos = p
+      updateDragPreview(startRos, startRos.clone().add(new THREE.Vector3(0.001, 0, 0)))
+    }
+
+    const onMove = (ev) => {
+      if (!goalPoseMode) return
+      ev.preventDefault()
+      const p = toRosGround(ev)
+      if (!p) return
+
+      if (dragging && startRos) {
+        updateDragPreview(startRos, p)
+      }
+    }
+
+    const onUp = (ev) => {
+      if (!goalPoseMode || !dragging || !startRos) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      const end = toRosGround(ev) || startRos
+      const dx = end.x - startRos.x
+      const dy = end.y - startRos.y
+      const yaw = Math.atan2(dy, dx)
+
+      getRosDataManager()?.publishGoalPose?.({
+        x: startRos.x,
+        y: startRos.y,
+        yaw,
+        frameId: getTfDisplayManager().fixedFrame || 'map',
+      })
+
+      SceneCommandBus.dispatch({
+        type: 'scene:goalpose:commit',
+        pose: { x: startRos.x, y: startRos.y, yaw },
+      })
+
+      dragging = false
+      startRos = null
+      SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: '__goal_pose_preview__' })
+      controls.enabled = prevControlsEnabled
+      dom.style.cursor = ''
+      onGoalPoseComplete?.()
+    }
+
+    if (goalPoseMode) {
+      controls.enabled = false
+      dom.style.cursor = 'crosshair'
+      dom.addEventListener('pointerdown', onDown)
+      dom.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+    } else {
+      controls.enabled = prevControlsEnabled
+      dom.style.cursor = ''
+      cleanupPreview()
+    }
+
+    return () => {
+      controls.enabled = prevControlsEnabled
+      dom.style.cursor = ''
+      dom.removeEventListener('pointerdown', onDown)
+      dom.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      cleanupPreview()
+    }
+  }, [goalPoseMode, onGoalPoseComplete])
+
   // ── Trajectory ────────────────────────────────────────────────────────
   useEffect(() => {
     const { trajGroup } = refs.current
@@ -422,6 +660,13 @@ export default function Viewport3D() {
   return (
     <div className="vp-wrap">
       <div ref={mountRef} className="vp-canvas" />
+      <div className="vp-view-select-wrap">
+        <select className="vp-view-select" value={viewMode} onChange={e => setViewMode(e.target.value)}>
+          <option value="orbit">Orbit</option>
+          <option value="topdown">TopDownView</option>
+          <option value="follower">ThirdPersonFollower</option>
+        </select>
+      </div>
     </div>
   )
 }

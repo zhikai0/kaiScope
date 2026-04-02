@@ -65,12 +65,12 @@
   border-radius: 50%;
   background: radial-gradient(
     circle at 35% 35%,
-    rgba(255,255,255,0.30),
-    rgba(255,159,10,0.55) 60%,
-    rgba(180,80,0,0.75)
+    rgba(220,245,255,0.55),
+    rgba(56,188,255,0.58) 55%,
+    rgba(8,96,196,0.82)
   );
-  border: 1px solid rgba(255,200,80,0.35);
-  box-shadow: 0 2px 12px rgba(255,159,10,0.30), 0 1px 3px rgba(0,0,0,0.4);
+  border: 1px solid rgba(102,220,255,0.45);
+  box-shadow: 0 2px 14px rgba(58,180,255,0.35), 0 1px 3px rgba(0,0,0,0.4);
   pointer-events: none;
   will-change: transform;
 }

@@ -40,10 +40,66 @@ const appendRight = (node, leaf) => {
   }
 }
 
+const isImageBranch = (node) => {
+  if (!node) return false
+  if (node.kind === 'leaf') return node.ptype === 'image'
+  return isImageBranch(node.a) && isImageBranch(node.b)
+}
+
+const appendImageInColumn = (node, imageLeaf) => {
+  if (!node) return imageLeaf
+
+  if (node.kind === 'split' && node.dir === 'v' && isImageBranch(node.b)) {
+    return { ...node, b: appendImageInColumn(node.b, imageLeaf) }
+  }
+
+  if (isImageBranch(node)) {
+    return {
+      kind: 'split',
+      dir: 'v',
+      ratio: 0.5,
+      a: node,
+      b: imageLeaf,
+    }
+  }
+
+  return appendRight(node, imageLeaf)
+}
+
+const appendImagePanel = (node, imageLeaf) => {
+  if (!node) return imageLeaf
+  if (node.kind === 'split' && node.dir === 'h') {
+    return { ...node, b: appendImageInColumn(node.b, imageLeaf) }
+  }
+  return {
+    kind: 'split',
+    dir: 'h',
+    ratio: 0.72,
+    a: node,
+    b: imageLeaf,
+  }
+}
+
+const removeImageLeafByUid = (node, uid) => {
+  if (!node) return node
+  if (node.kind === 'leaf') {
+    return node.ptype === 'image' && node.displayUid === uid ? null : node
+  }
+
+  const nextA = removeImageLeafByUid(node.a, uid)
+  const nextB = removeImageLeafByUid(node.b, uid)
+
+  if (!nextA && !nextB) return null
+  if (!nextA) return nextB
+  if (!nextB) return nextA
+  return { ...node, a: nextA, b: nextB }
+}
+
 export default function RobotVisualizer({ onBack }) {
   const [layout, setLayout] = useState({ kind: 'leaf', ptype: '3d' })
   const [displaysVisible, setDisplaysVisible] = useState(true)
   const [controlMode, setControlMode] = useState(false)
+  const [goalPoseMode, setGoalPoseMode] = useState(false)
   const [showJoystickConfig, setShowJoystickConfig] = useState(false)
 
   const handleToggleControl = () => {
@@ -67,15 +123,24 @@ export default function RobotVisualizer({ onBack }) {
     }))
   }
 
-  const splitImage = useCallback((_topic) => {
+  const splitImage = useCallback((displayUid) => {
     setLayout(prev => {
       if (countLeafType(prev, 'image') >= 4) return prev
-      return appendRight(prev, { kind: 'leaf', ptype: 'image' })
+      return appendImagePanel(prev, { kind: 'leaf', ptype: 'image', displayUid })
+    })
+  }, [])
+
+  const removeImage = useCallback((displayUid) => {
+    setLayout(prev => {
+      const next = removeImageLeafByUid(prev, displayUid)
+      return next || { kind: 'leaf', ptype: '3d' }
     })
   }, [])
 
   const renderPanel = (ptype, pt) => {
-    if (ptype === '3d') return <Viewport3D />
+    if (ptype === '3d') {
+      return <Viewport3D goalPoseMode={goalPoseMode} onGoalPoseComplete={() => setGoalPoseMode(false)} />
+    }
     if (ptype === 'image') return <ImagePanel />
     return (
       <div className="pcell-placeholder">
@@ -97,8 +162,8 @@ export default function RobotVisualizer({ onBack }) {
       />
 
       <TopNav
-        onToggleDisplays={() => setDisplaysVisible(v => !v)}
-        displaysVisible={displaysVisible}
+        goalPoseMode={goalPoseMode}
+        onToggleGoalPose={() => setGoalPoseMode(v => !v)}
         controlMode={controlMode}
         onToggleControl={handleToggleControl}
         onOpenControlConfig={() => {
@@ -108,7 +173,12 @@ export default function RobotVisualizer({ onBack }) {
         onBack={onBack}
       />
 
-      <LeftPanel visible={displaysVisible} onVisibleChange={setDisplaysVisible} onImageAdd={splitImage} />
+      <LeftPanel
+        visible={displaysVisible}
+        onVisibleChange={setDisplaysVisible}
+        onImageAdd={splitImage}
+        onImageRemove={removeImage}
+      />
 
       {isSingle && (
         <div className="view-sw">

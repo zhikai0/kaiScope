@@ -37,9 +37,11 @@ export class RosDataManager extends EventTarget {
   _bindConnectionEvents() {
     this.conn.on('connect', () => {
       this._emit('connection', { status: 'connected' })
-      // 重连后重置 cmd_vel 状态，强制重新 advertise
+      // 重连后重置 publishers 状态，强制重新 advertise
       this._cmdVelWriter = null
       this._cmdVelChanId = null
+      this._goalPoseWriter = null
+      this._goalPoseChanId = null
       this._resubscribeAll()
       this._autoSubscribeTF()
     })
@@ -55,6 +57,7 @@ export class RosDataManager extends EventTarget {
     this.conn.on('advertise', ({ detail }) => {
       detail?.channels?.forEach(ch => this._channels.set(ch.id, ch))
       this._emit('channels', { channels: Array.from(this._channels.values()) })
+      this._retryPendingSubscriptions()
       this._autoSubscribeTF()
     })
     this.conn.on('unadvertise', ({ detail }) => {
@@ -177,6 +180,66 @@ export class RosDataManager extends EventTarget {
 
   _doPublishCmdVel(linear, angular) { this.publishCmdVel(linear, angular) }
 
+  publishGoalPose({ x, y, yaw, frameId = 'map' }) {
+    if (this.conn?.ws?.readyState !== WebSocket.OPEN) return
+
+    if (this._goalPoseWriter && this._goalPoseChanId) {
+      this._sendGoalPoseCdr({ x, y, yaw, frameId })
+      return
+    }
+
+    const ch = Array.from(this._channels.values()).find(
+      c => c.schemaName === 'geometry_msgs/msg/PoseStamped' && c.schema
+    )
+    if (!ch?.schema) {
+      console.warn('[RosDataManager] no PoseStamped schema available yet')
+      return
+    }
+
+    const chanId = this.conn.advertise({
+      topic: '/goal_pose',
+      encoding: 'cdr',
+      schemaName: 'geometry_msgs/msg/PoseStamped',
+    })
+    if (!chanId) return
+
+    try {
+      const msgDef = parse(ch.schema, { ros2: true })
+      this._goalPoseWriter = new MessageWriter(msgDef)
+      this._goalPoseChanId = chanId
+      this._sendGoalPoseCdr({ x, y, yaw, frameId })
+    } catch (e) {
+      console.warn('[RosDataManager] goal_pose setup error', e)
+    }
+  }
+
+  _sendGoalPoseCdr({ x, y, yaw, frameId }) {
+    const half = yaw * 0.5
+    const qz = Math.sin(half)
+    const qw = Math.cos(half)
+    const nowMs = Date.now()
+    const sec = Math.floor(nowMs / 1000)
+    const nanosec = Math.floor((nowMs % 1000) * 1e6)
+
+    const message = {
+      header: {
+        stamp: { sec, nanosec },
+        frame_id: frameId,
+      },
+      pose: {
+        position: { x: +x, y: +y, z: 0 },
+        orientation: { x: 0, y: 0, z: qz, w: qw },
+      },
+    }
+
+    try {
+      const payload = this._goalPoseWriter.writeMessage(message)
+      this.conn.sendMessage(this._goalPoseChanId, payload)
+    } catch (e) {
+      console.warn('[RosDataManager] _sendGoalPoseCdr error', e)
+    }
+  }
+
   // ── Internal: subscribe/unsubscribe wire ──────────────────────────────
 
   _sendSubscribe(topic) {
@@ -216,6 +279,13 @@ export class RosDataManager extends EventTarget {
       entry.channelId = null
       entry.subId = null
       this._sendSubscribe(topic)
+    }
+  }
+
+  _retryPendingSubscriptions() {
+    for (const [topic, entry] of this._subs.entries()) {
+      if (!entry.listeners || entry.listeners.size === 0) continue
+      if (!entry.channelId || !entry.subId) this._sendSubscribe(topic)
     }
   }
 

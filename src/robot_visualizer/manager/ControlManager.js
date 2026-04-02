@@ -15,12 +15,12 @@ import { getRosDataManager } from '../data/getRosDataManager'
 export class ControlManager {
   constructor() {
     // ── 可配置参数 ──────────────────────────────────────────
-    this.maxLinear      = 1.0    // m/s
+    this.maxLinear      = 3.0    // m/s
     this.maxAngular     = 0.5   // rad/s
     this.linearAccel    = 1.0   // m/s²  (加速)
     this.linearDecel    = 1.0   // m/s²  (减速/松杆)
-    this.angularAccel   = 1.0   // rad/s²
-    this.angularDecel   = 1.0   // rad/s²
+    this.angularAccel   = 0.5   // rad/s²
+    this.angularDecel   = 0.5   // rad/s²
     // ── 内部状态 ─────────────────────────────────────────────
     this._publishHz     = 20
     this._timer         = null
@@ -39,10 +39,23 @@ export class ControlManager {
   setConfig({ maxLinear, maxAngular, linearAccel, linearDecel, angularAccel, angularDecel } = {}) {
     if (maxLinear    != null) this.maxLinear    = maxLinear
     if (maxAngular   != null) this.maxAngular   = maxAngular
-    if (linearAccel  != null) this.linearAccel  = linearAccel
-    if (linearDecel  != null) this.linearDecel  = linearDecel
-    if (angularAccel != null) this.angularAccel = angularAccel
-    if (angularDecel != null) this.angularDecel = angularDecel
+
+    // 统一加/减速度：内部始终使用同一个加速度值
+    if (linearAccel  != null) {
+      this.linearAccel = linearAccel
+      this.linearDecel = linearAccel
+    } else if (linearDecel != null) {
+      this.linearAccel = linearDecel
+      this.linearDecel = linearDecel
+    }
+
+    if (angularAccel != null) {
+      this.angularAccel = angularAccel
+      this.angularDecel = angularAccel
+    } else if (angularDecel != null) {
+      this.angularAccel = angularDecel
+      this.angularDecel = angularDecel
+    }
   }
 
   getConfig() {
@@ -122,11 +135,8 @@ export class ControlManager {
     if (Math.abs(diffL) < 0.001) {
       this._curLinear = targetLinear
     } else {
-      // 判断是加速还是减速（方向相同且幅值增大=加速，否则减速）
-      const accel = (diffL * this._curLinear >= 0 && Math.abs(targetLinear) > Math.abs(this._curLinear))
-        ? this.linearAccel
-        : this.linearDecel
-      const step = accel * dt
+      // 统一加减速度
+      const step = this.linearAccel * dt
       this._curLinear += diffL > 0 ? Math.min(step, diffL) : Math.max(-step, diffL)
     }
 
@@ -136,10 +146,7 @@ export class ControlManager {
     if (Math.abs(diffA) < 0.001) {
       this._curAngular = targetAngular
     } else {
-      const accel = (diffA * this._curAngular >= 0 && Math.abs(targetAngular) > Math.abs(this._curAngular))
-        ? this.angularAccel
-        : this.angularDecel
-      const step = accel * dt
+      const step = this.angularAccel * dt
       this._curAngular += diffA > 0 ? Math.min(step, diffA) : Math.max(-step, diffA)
     }
 

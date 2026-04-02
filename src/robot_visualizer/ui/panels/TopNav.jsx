@@ -17,7 +17,7 @@ const STATUS_LABEL = {
   disconnected: 'Foxglove',
 }
 
-export default function TopNav({ onToggleDisplays, displaysVisible, controlMode, onToggleControl, onOpenControlConfig, onBack }) {
+export default function TopNav({ goalPoseMode, onToggleGoalPose, controlMode, onToggleControl, onOpenControlConfig, onBack }) {
   const { status, channels, connect, disconnect } = useRos()
 
   const isConnected = status === 'connected'
@@ -66,18 +66,17 @@ export default function TopNav({ onToggleDisplays, displaysVisible, controlMode,
         </>
       )}
 
-      {/* LEFT — Displays toggle */}
+      {/* CENTER — 2D Goal Pose */}
       <button
-        className={`tb-displays ${displaysVisible ? 'active' : ''}`}
-        onClick={onToggleDisplays}
-        title="Toggle Displays Panel"
+        className={`tb-goalpose ${goalPoseMode ? 'active' : ''}`}
+        onClick={onToggleGoalPose}
+        title="2D Goal Pose"
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="3" width="7" height="18" rx="1"/>
-          <rect x="14" y="3" width="7" height="8" rx="1"/>
-          <rect x="14" y="15" width="7" height="6" rx="1"/>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M4 20V10"/>
+          <path d="M4 10h11l-2.5 3 2.5 3H4"/>
         </svg>
-        <span>Displays</span>
+        <span>2D Goal Pose</span>
       </button>
 
       <div className="tb-div"/>

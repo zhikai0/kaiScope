@@ -33,17 +33,22 @@ export class ArrowMarker extends BaseMarker {
     const opacity = this.options.opacity ?? 1.0
     const segs    = 14
 
-    this._radius  = 0.022 * scale
-    this._headLen = 0.5 * scale         // keep arrowhead size fixed
-    this._headR   = this._radius * 3.5
+    this._radius  = this.options.shaftRadius ?? (0.022 * scale)
+    this._fixedShaftLen = this.options.fixedShaftLength
+    this._fixedHeadLen = this.options.fixedHeadLength
+    this._headLen = this._fixedHeadLen ?? (this.options.headLength ?? (0.5 * scale))
+    this._headR   = this.options.headRadius ?? (this._radius * 3.5)
 
     const isTransp = opacity < 1.0
 
     // ── Shaft material: warm yellow ──────────────────────────────────
     // Low emissiveIntensity — let lighting do the work, avoid colour washout
+    const shaftColor = this.options.shaftColor ?? ArrowMarker.SHAFT_COLOR
+    const headColor = this.options.headColor ?? ArrowMarker.HEAD_COLOR
+
     const shaftMat = new THREE.MeshStandardMaterial({
-      color:             new THREE.Color(ArrowMarker.SHAFT_COLOR),
-      emissive:          new THREE.Color(ArrowMarker.SHAFT_COLOR),
+      color:             new THREE.Color(shaftColor),
+      emissive:          new THREE.Color(shaftColor),
       emissiveIntensity: 0.0,
       metalness:         0.45,
       roughness:         0.4,
@@ -54,8 +59,8 @@ export class ArrowMarker extends BaseMarker {
 
     // ── Head material: vivid pink ────────────────────────────────────
     const headMat = new THREE.MeshStandardMaterial({
-      color:             new THREE.Color(ArrowMarker.HEAD_COLOR),
-      emissive:          new THREE.Color(ArrowMarker.HEAD_COLOR),
+      color:             new THREE.Color(headColor),
+      emissive:          new THREE.Color(headColor),
       emissiveIntensity: 0.0,
       metalness:         0.5,
       roughness:         0.35,
@@ -81,10 +86,11 @@ export class ArrowMarker extends BaseMarker {
   }
 
   _setLength(length) {
-    const shaftLen = Math.max(length - this._headLen, 0.001)
+    const headLen = this._fixedHeadLen ?? this._headLen
+    const shaftLen = this._fixedShaftLen ?? Math.max(length - headLen, 0.001)
     this._shaft.scale.set(1, shaftLen, 1)
     this._shaft.position.y = shaftLen / 2
-    this._head.position.y  = shaftLen + this._headLen / 2
+    this._head.position.y  = shaftLen + headLen / 2
   }
 
   /**

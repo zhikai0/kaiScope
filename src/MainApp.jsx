@@ -42,13 +42,16 @@ const MODULES = [
 
 export default function MainApp() {
   const [selectedModule, setSelectedModule] = useState(null)
+  const [hasOpenedRobot, setHasOpenedRobot] = useState(false)
 
   return (
     <>
-      {/* RobotVisualizer 始终挂载，用 display 控制显隐，保持场景状态 */}
-      <div style={selectedModule === 'robot-visualizer' ? undefined : {display:'none'}} >
-        <RobotVisualizer onBack={() => setSelectedModule(null)} />
-      </div>
+      {/* 首次进入 RobotVisualizer 时才挂载；之后保持挂载，用 display 控制显隐 */}
+      {hasOpenedRobot && (
+        <div style={selectedModule === 'robot-visualizer' ? undefined : { display: 'none' }}>
+          <RobotVisualizer onBack={() => setSelectedModule(null)} />
+        </div>
+      )}
 
       {selectedModule !== 'robot-visualizer' && (
         <div className="main-menu">
@@ -64,7 +67,10 @@ export default function MainApp() {
                   <button
                     key={mod.id}
                     className="module-card"
-                    onClick={() => setSelectedModule(mod.id)}
+                    onClick={() => {
+                      if (mod.id === 'robot-visualizer') setHasOpenedRobot(true)
+                      setSelectedModule(mod.id)
+                    }}
                   >
                     <div className="module-icon">
                       <IconComponent />

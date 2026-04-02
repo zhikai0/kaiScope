@@ -98,7 +98,7 @@ function SingleJoystick({ side, onMove, onRelease }) {
     }
   }, [moveKnob, doRelease])
 
-  const LABELS = { left: { top:'前', bottom:'后', left:'左', right:'右' }, right: { top:'左转', bottom:'右转' } }
+  const LABELS = { left: { top:'前', bottom:'后' }, right: { left:'左转', right:'右转' } }
   const lb = LABELS[side]
 
   return (
@@ -139,9 +139,7 @@ function ConfigPanel({ onClose }) {
     { key: 'maxLinear',    label: '最大线速度',  unit: 'm/s',    min: 0.1, step: 0.1 },
     { key: 'maxAngular',   label: '最大角速度',  unit: 'rad/s',  min: 0.1, step: 0.1 },
     { key: 'linearAccel',  label: '线加速度',    unit: 'm/s²',   min: 0.1, step: 0.1 },
-    { key: 'linearDecel',  label: '线减速度',    unit: 'm/s²',   min: 0.1, step: 0.1 },
     { key: 'angularAccel', label: '角加速度',    unit: 'rad/s²', min: 0.1, step: 0.1 },
-    { key: 'angularDecel', label: '角减速度',    unit: 'rad/s²', min: 0.1, step: 0.1 },
   ]
 
   return (
@@ -176,7 +174,7 @@ function ConfigPanel({ onClose }) {
 }
 
 // ── VirtualJoystick ──────────────────────────────────────────────────────
-export default function VirtualJoystick({ visible, onConfigOpen, showConfig, onConfigClose }) {
+export default function VirtualJoystick({ visible, showConfig, onConfigClose }) {
   const ctrl = getControlManager()
 
   const handleLeftMove    = useCallback(({ y }) => ctrl.setLeftY(y),    [ctrl])
@@ -185,6 +183,56 @@ export default function VirtualJoystick({ visible, onConfigOpen, showConfig, onC
   const handleRightRelease= useCallback(()       => ctrl.releaseRight(), [ctrl])
 
   useEffect(() => { if (!visible) ctrl.stop() }, [visible, ctrl])
+
+  useEffect(() => {
+    if (!visible) return
+
+    const pressed = new Set()
+
+    const apply = () => {
+      const forward = pressed.has('w') || pressed.has('arrowup')
+      const backward = pressed.has('s') || pressed.has('arrowdown')
+      const left = pressed.has('a') || pressed.has('arrowleft')
+      const right = pressed.has('d') || pressed.has('arrowright')
+
+      const ly = (forward ? 1 : 0) + (backward ? -1 : 0)
+      const rx = (left ? -1 : 0) + (right ? 1 : 0)
+
+      if (ly !== 0) ctrl.setLeftY(ly)
+      else ctrl.releaseLeft()
+
+      if (rx !== 0) ctrl.setRightX(rx)
+      else ctrl.releaseRight()
+    }
+
+    const onKeyDown = (e) => {
+      if (showConfig) return
+      const k = e.key.toLowerCase()
+      if (!['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) return
+      e.preventDefault()
+      if (!pressed.has(k)) {
+        pressed.add(k)
+        apply()
+      }
+    }
+
+    const onKeyUp = (e) => {
+      const k = e.key.toLowerCase()
+      if (!pressed.has(k)) return
+      e.preventDefault()
+      pressed.delete(k)
+      apply()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      ctrl.releaseLeft()
+      ctrl.releaseRight()
+    }
+  }, [visible, showConfig, ctrl])
 
   if (!visible) return null
 

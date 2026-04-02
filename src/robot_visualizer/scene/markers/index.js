@@ -25,17 +25,19 @@ import { AxesMarker }  from './AxesMarker'
 import { PathMarker }  from './PathMarker'
 import { TextMarker }  from './TextMarker'
 import { ArrowMarker } from './ArrowMarker'
+import { PointCloudMarker } from './PointCloudMarker'
 // import { PoseMarker } from './PoseMarker'        // 待实现
 // import { PointCloudMarker } from './PointCloudMarker'  // 待实现
 
 export { BaseMarker } from './BaseMarker'
-export { AxesMarker, PathMarker, TextMarker, ArrowMarker }
+export { AxesMarker, PathMarker, TextMarker, ArrowMarker, PointCloudMarker }
 
 const MARKER_REGISTRY = {
-  'axes':  AxesMarker,
-  'path':  PathMarker,
-  'text':  TextMarker,
-  'arrow': ArrowMarker,
+  'axes':       AxesMarker,
+  'path':       PathMarker,
+  'text':       TextMarker,
+  'arrow':      ArrowMarker,
+  'pointcloud': PointCloudMarker,
   // 'pose':       PoseMarker,
   // 'pointcloud': PointCloudMarker,
 }
