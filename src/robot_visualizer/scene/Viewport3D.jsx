@@ -52,7 +52,7 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
     scene.background = new THREE.Color(0x303030)
 
     const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.05, 50000)
-    camera.position.set(0, 18, 18)
+    camera.position.set(0, 18, 0)
     camera.lookAt(0, 0, 0)
 
     const controls = new OrbitControls(camera, renderer.domElement)
@@ -330,6 +330,8 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
           refs.current._urdfModels.clear()
         }
         if (refs.current._urdfCache) refs.current._urdfCache.clear()
+        if (refs.current._urdfInflight) refs.current._urdfInflight.clear()
+        if (refs.current._urdfLoadSeq) refs.current._urdfLoadSeq.clear()
 
         // 4. Reset camera to default
         refs.current.cameraViews?.setMode('orbit')
@@ -390,30 +392,60 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
 
         // 缓存检查：相同 urdfText 不重复加载
         if (!refs.current._urdfCache) refs.current._urdfCache = new Map()
+        if (!refs.current._urdfInflight) refs.current._urdfInflight = new Map()
+        if (!refs.current._urdfLoadSeq) refs.current._urdfLoadSeq = new Map()
+
         const cacheKey = `${urdfText?.length}:${urdfText?.slice(0, 100)}`
         if (refs.current._urdfCache.get(uid) === cacheKey && refs.current._urdfModels?.get(uid)?.isLoaded) {
           console.log(`[Viewport3D] URDF cache hit for uid=${uid}, skip reload`)
           return
         }
 
+        const inflight = refs.current._urdfInflight.get(uid)
+        if (inflight?.cacheKey === cacheKey) {
+          console.log(`[Viewport3D] URDF load in-flight for uid=${uid}, skip duplicate request`)
+          return
+        }
+
+        const nextSeq = (refs.current._urdfLoadSeq.get(uid) || 0) + 1
+        refs.current._urdfLoadSeq.set(uid, nextSeq)
+        refs.current._urdfInflight.set(uid, { cacheKey, seq: nextSeq })
+
         const { URDFModel } = await import('./urdf_loader/index.js')
         if (!refs.current._urdfModels) refs.current._urdfModels = new Map()
         const existing = refs.current._urdfModels.get(uid)
         if (existing) { console.log('[Viewport3D] disposing existing URDFModel'); existing.dispose() }
+
         const model = new URDFModel(rosRoot)
         refs.current._urdfModels.set(uid, model)
+
         try {
           await model.loadFromString(urdfText)
+
+          const latestSeq = refs.current._urdfLoadSeq.get(uid)
+          if (latestSeq !== nextSeq) {
+            console.log(`[Viewport3D] stale URDF load result discarded uid=${uid}, seq=${nextSeq}, latest=${latestSeq}`)
+            model.dispose()
+            if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
+            return
+          }
+
           refs.current._urdfCache.set(uid, cacheKey)
           console.log(`[Viewport3D] URDF loaded for uid=${uid}`)
         } catch (e) {
           console.error('[Viewport3D] URDF load failed:', e)
+          if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
+        } finally {
+          const pending = refs.current._urdfInflight.get(uid)
+          if (pending?.seq === nextSeq) refs.current._urdfInflight.delete(uid)
         }
       }),
 
       SceneCommandBus.register('scene:urdf:dispose', ({ uid }) => {
         const model = refs.current._urdfModels?.get(uid)
         if (model) { model.dispose(); refs.current._urdfModels.delete(uid) }
+        refs.current._urdfInflight?.delete(uid)
+        refs.current._urdfLoadSeq?.delete(uid)
       }),
     ]
 

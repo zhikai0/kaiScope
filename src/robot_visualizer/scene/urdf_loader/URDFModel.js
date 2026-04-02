@@ -11,12 +11,6 @@ function getSharedMeshLoader(proxyBase = '/api/urdf') {
 
 /**
  * URDFModel — 在 Three.js 场景中加载并管理 URDF 机器人模型
- *
- * 使用方法：
- *   const model = new URDFModel(rosRoot, { proxyBase: '/api/urdf' })
- *   await model.loadFromString(urdfText)
- *   model.setJointAngle('front_left_steering_joint', 0.3)
- *   model.dispose()
  */
 export class URDFModel {
   constructor(parent, options = {}) {
@@ -35,9 +29,15 @@ export class URDFModel {
   async loadFromString(urdfText) {
     console.log(`[URDFModel] loadFromString called, length=${urdfText?.length}, preview=${urdfText?.slice(0,80)}`)
     this._disposeModel()
-    this._parsed = URDFParser.parse(urdfText)
+
+    await URDFModel._yieldToMainThread()
+    this._parsed = await URDFModel._parseWithWorker(urdfText)
     console.log(`[URDFModel] parsed: robot=${this._parsed.name}, links=${this._parsed.links.size}, joints=${this._parsed.joints.size}`)
+
+    await URDFModel._yieldToMainThread()
     await this._build()
+
+    await URDFModel._yieldToMainThread()
     this._parent.add(this._root)
     this._loaded = true
     console.log(`[URDFModel] Loaded robot: ${this._parsed.name}, root children=${this._root.children.length}`)
@@ -45,8 +45,6 @@ export class URDFModel {
 
   /**
    * 从 ROS DataManager 订阅 /robot_description 加载
-   * @param {string} topic
-   * @param {object} rosDataManager  实现了 subscribe(topic, cb) 的数据管理器
    */
   loadFromTopic(topic = '/robot_description', rosDataManager) {
     rosDataManager.subscribe(topic, (msg) => {
@@ -57,11 +55,7 @@ export class URDFModel {
     })
   }
 
-  /**
-   * 设置关节角度（弧度）
-   * @param {string} jointName
-   * @param {number} angle  弧度
-   */
+  /** 设置关节角度（弧度） */
   setJointAngle(jointName, angle) {
     const pivot = this._jointNodes.get(jointName)
     const joint = this._parsed?.joints.get(jointName)
@@ -78,14 +72,15 @@ export class URDFModel {
     const { links, joints } = this._parsed
     console.log(`[URDFModel] _build: ${links.size} links, ${joints.size} joints`)
 
-    // 为每个 link 创建 Group
-    links.forEach((link, name) => {
+    let createdLinks = 0
+    for (const [name] of links.entries()) {
       const g = new THREE.Group()
       g.name = `link_${name}`
       this._linkNodes.set(name, g)
-    })
+      createdLinks += 1
+      if (createdLinks % 40 === 0) await URDFModel._yieldToMainThread()
+    }
 
-    // 找根 link（不是任何 joint 的 child）
     const childLinks = new Set()
     joints.forEach(j => childLinks.add(j.child))
     let rootLinkName = null
@@ -93,21 +88,20 @@ export class URDFModel {
     if (!rootLinkName) rootLinkName = links.keys().next().value
     console.log(`[URDFModel] root link: ${rootLinkName}`)
 
-    // 递归构建 link 树
     this._root.add(this._linkNodes.get(rootLinkName))
     this._attachChildren(rootLinkName, joints)
 
-    // 并行加载所有 visual mesh
-    const loadPromises = []
-    links.forEach((link, name) => {
+    const visualTasks = []
+    for (const [name, link] of links.entries()) {
       const node = this._linkNodes.get(name)
       for (const visual of link.visuals) {
-        loadPromises.push(this._addVisual(node, visual))
+        visualTasks.push(() => this._addVisual(node, visual))
       }
-    })
-    console.log(`[URDFModel] loading ${loadPromises.length} visuals...`)
-    await Promise.all(loadPromises)
-    console.log(`[URDFModel] all visuals loaded`)
+    }
+
+    console.log(`[URDFModel] loading ${visualTasks.length} visuals...`)
+    await this._runWithConcurrency(visualTasks, 4)
+    console.log('[URDFModel] all visuals loaded')
   }
 
   _attachChildren(parentLinkName, joints) {
@@ -127,24 +121,77 @@ export class URDFModel {
 
   async _addVisual(linkNode, visual) {
     const { origin, geometry } = visual
-    if (!geometry) { console.log('[URDFModel] visual has no geometry, skip'); return }
+    if (!geometry) return
+
     let obj
     if (geometry.type === 'mesh') {
-      console.log(`[URDFModel] loading mesh: ${geometry.filename}`)
       const loaded = await this._meshLoader.load(geometry.filename)
       obj = loaded.clone(true)
-      // 应用 mesh scale（如果 URDF 指定了）
       const s = geometry.scale
       if (s && (s.x !== 0 || s.y !== 0 || s.z !== 0)) {
         obj.scale.set(s.x || 1, s.y || 1, s.z || 1)
       }
     } else {
-      console.log(`[URDFModel] building primitive: ${geometry.type}`)
       obj = URDFModel._buildPrimitive(geometry)
     }
-    if (!obj) { console.warn('[URDFModel] _addVisual: obj is null after load'); return }
+    if (!obj) return
+
     URDFModel._applyOrigin(obj, origin)
     linkNode.add(obj)
+  }
+
+  async _runWithConcurrency(tasks, maxConcurrency = 4) {
+    if (!tasks.length) return
+    const queue = [...tasks]
+    const workers = Array.from({ length: Math.min(maxConcurrency, tasks.length) }, async () => {
+      while (queue.length) {
+        const task = queue.shift()
+        if (!task) return
+        await task()
+        await URDFModel._yieldToMainThread()
+      }
+    })
+    await Promise.all(workers)
+  }
+
+  static async _parseWithWorker(urdfText) {
+    try {
+      const worker = new Worker(new URL('./URDFParseWorker.js', import.meta.url), { type: 'module' })
+      const payload = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(new Error('URDF parse worker timeout'))
+        }, 15000)
+
+        worker.onmessage = (e) => {
+          clearTimeout(timer)
+          const { ok, data, error } = e.data || {}
+          if (!ok) reject(new Error(error || 'URDF parse worker failed'))
+          else resolve(data)
+        }
+        worker.onerror = (e) => {
+          clearTimeout(timer)
+          reject(e.error || new Error(e.message || 'URDF parse worker error'))
+        }
+
+        worker.postMessage({ urdfText })
+      })
+
+      worker.terminate()
+      return URDFModel._deserializeParsed(payload)
+    } catch (e) {
+      console.warn('[URDFModel] worker parse failed, fallback to main thread:', e)
+      return URDFParser.parse(urdfText)
+    }
+  }
+
+  static _deserializeParsed(payload) {
+    const links = new Map((payload.links || []).map(([name, link]) => [name, link]))
+    const joints = new Map((payload.joints || []).map(([name, joint]) => [name, joint]))
+    return { name: payload.name || 'robot', links, joints }
+  }
+
+  static _yieldToMainThread() {
+    return new Promise(resolve => setTimeout(resolve, 0))
   }
 
   // ── Static helpers ───────────────────────────────────────────────────
@@ -158,15 +205,13 @@ export class URDFModel {
   }
 
   static _buildPrimitive(geometry) {
-    let geo, mat
-    mat = new THREE.MeshStandardMaterial({ color: 0x888888 })
+    let geo
+    const mat = new THREE.MeshStandardMaterial({ color: 0x888888 })
     if (geometry.type === 'box') {
       const s = geometry.size
       geo = new THREE.BoxGeometry(s.x, s.y, s.z)
     } else if (geometry.type === 'cylinder') {
-      geo = new THREE.CylinderGeometry(
-        geometry.radius, geometry.radius, geometry.length, 16
-      )
+      geo = new THREE.CylinderGeometry(geometry.radius, geometry.radius, geometry.length, 16)
     } else if (geometry.type === 'sphere') {
       geo = new THREE.SphereGeometry(geometry.radius, 16, 12)
     } else {
@@ -191,6 +236,5 @@ export class URDFModel {
 
   dispose() {
     this._disposeModel()
-    // 不 dispose 共享 MeshLoader，缓存保留供下次使用
   }
 }

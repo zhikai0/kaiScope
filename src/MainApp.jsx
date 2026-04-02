@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import RobotVisualizer from './robot_visualizer'
+import SerialDebugApp from './serial_debug'
 import './MainApp.css'
 
 // SVG 图标组件
@@ -11,15 +12,6 @@ const RobotIcon = () => (
     <rect x="14" y="24" width="4" height="12" rx="1" />
     <rect x="30" y="24" width="4" height="12" rx="1" />
     <rect x="10" y="20" width="28" height="3" rx="1" />
-  </svg>
-)
-
-const PathIcon = () => (
-  <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5">
-    <path d="M 8 40 Q 24 8 40 24" strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="8" cy="40" r="2.5" fill="currentColor" />
-    <circle cx="40" cy="24" r="2.5" fill="currentColor" />
-    <path d="M 20 20 L 28 16 L 26 24 Z" fill="currentColor" />
   </svg>
 )
 
@@ -43,6 +35,7 @@ const MODULES = [
 export default function MainApp() {
   const [selectedModule, setSelectedModule] = useState(null)
   const [hasOpenedRobot, setHasOpenedRobot] = useState(false)
+  const [hasOpenedSerial, setHasOpenedSerial] = useState(false)
 
   return (
     <>
@@ -53,7 +46,13 @@ export default function MainApp() {
         </div>
       )}
 
-      {selectedModule !== 'robot-visualizer' && (
+      {hasOpenedSerial && (
+        <div style={selectedModule === 'serial-debug' ? undefined : { display: 'none' }}>
+          <SerialDebugApp onBack={() => setSelectedModule(null)} />
+        </div>
+      )}
+
+      {selectedModule !== 'robot-visualizer' && selectedModule !== 'serial-debug' && (
         <div className="main-menu">
           <div className="menu-container">
             <div className="menu-header">
@@ -69,6 +68,7 @@ export default function MainApp() {
                     className="module-card"
                     onClick={() => {
                       if (mod.id === 'robot-visualizer') setHasOpenedRobot(true)
+                      if (mod.id === 'serial-debug') setHasOpenedSerial(true)
                       setSelectedModule(mod.id)
                     }}
                   >

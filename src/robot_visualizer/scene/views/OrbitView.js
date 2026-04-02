@@ -8,7 +8,7 @@ export class OrbitView extends BaseView {
     this._controls = controls
     this._target = null
     this._lastTargetPos = null
-    this._offset = new THREE.Vector3(-30, 0, 30)
+    this._offset = new THREE.Vector3(0, 0, 30)
     this._initializedFromTarget = false
   }
 

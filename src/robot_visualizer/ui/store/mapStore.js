@@ -7,7 +7,7 @@ import { create } from 'zustand'
  */
 export const useMapStore = create((set) => ({
   // Map display control
-  mapEnabled: true,
+  mapEnabled: false,
   mapOpacity: 1.0,
 
   // GNSS location & zoom

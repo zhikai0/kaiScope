@@ -512,9 +512,9 @@ const DEFAULT_DISPLAYS = [
   { uid:'global-1',  id:'global',     label:'Global Options',color:'#8e8e93', status:'ok',   checked:true,  icon:'⚙️', noChk:true, noDel:true },
   { uid:'grid-1',    id:'grid',       label:'Grid',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'⊞' },
   { uid:'robot-1',   id:'robotmodel', label:'RobotModel',    color:'#0a84ff', status:'ok',   checked:true,  icon:'🤖', topic:'/robot_description', params:{ topic:'/robot_description' }},
-  { uid:'map-1',     id:'map',        label:'SatelliteMap',  color:'#34c759', status:'ok',   checked:true,  icon:'🗺' },
-  { uid:'path-1',    id:'path',       label:'Path',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'〰' },
   { uid:'tf-1',      id:'tf',         label:'TF',            color:'#ff9f0a', status:'ok',   checked:true,  icon:'📐' },
+  { uid:'map-1',     id:'map',        label:'SatelliteMap',  color:'#34c759', status:'ok',   checked:false, icon:'🗺' },
+  { uid:'path-1',    id:'path',       label:'Path',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'〰' },
 ]
 
 export default function LeftPanel({ visible: visibleProp, onVisibleChange, onImageAdd, onImageRemove }) {
