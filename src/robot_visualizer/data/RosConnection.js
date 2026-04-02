@@ -41,6 +41,18 @@ export class RosConnection extends EventTarget {
     this._emit('disconnect')
   }
 
+  unadvertise(channelId) {
+    if (!this.isConnected || !this.ws || !channelId) return
+    try {
+      this.ws.send(JSON.stringify({
+        op: 'unadvertise',
+        channelIds: [channelId],
+      }))
+    } catch (e) {
+      console.warn('[RosConnection] unadvertise error', e)
+    }
+  }
+
   send(obj) {
     if (!this.isConnected || !this.ws) return
     try { this.ws.send(typeof obj === 'string' ? obj : JSON.stringify(obj)) }

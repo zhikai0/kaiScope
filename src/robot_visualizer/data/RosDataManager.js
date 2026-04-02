@@ -8,11 +8,48 @@ import { getTfManager } from './TfManager'
 import { parse } from '@foxglove/rosmsg'
 import { MessageReader, MessageWriter } from '@foxglove/rosmsg2-serialization'
 
+const TWIST_SCHEMA_FALLBACK = `geometry_msgs/Vector3 linear
+geometry_msgs/Vector3 angular
+================================================================================
+MSG: geometry_msgs/Vector3
+float64 x
+float64 y
+float64 z
+`
+
+const POSE_STAMPED_SCHEMA_FALLBACK = `std_msgs/Header header
+geometry_msgs/Pose pose
+================================================================================
+MSG: std_msgs/Header
+builtin_interfaces/Time stamp
+string frame_id
+================================================================================
+MSG: builtin_interfaces/Time
+int32 sec
+uint32 nanosec
+================================================================================
+MSG: geometry_msgs/Pose
+geometry_msgs/Point position
+geometry_msgs/Quaternion orientation
+================================================================================
+MSG: geometry_msgs/Point
+float64 x
+float64 y
+float64 z
+================================================================================
+MSG: geometry_msgs/Quaternion
+float64 x
+float64 y
+float64 z
+float64 w
+`
+
 export class RosDataManager extends EventTarget {
-  constructor(connection) {
+  constructor(connection, options = {}) {
     super()
     /** @type {import('./RosConnection').RosConnection} */
     this.conn = connection
+    this._autoSubscribeTFEnabled = options.autoSubscribeTF !== false
 
     // channel registry: channelId -> channel object
     this._channels = new Map()
@@ -28,6 +65,9 @@ export class RosDataManager extends EventTarget {
     this.allFrames   = new Set()
     this._staticTF   = new Map()
     this._dynamicTF  = new Map()   // frame -> { ...transform, lastUpdate }
+    this._tfLastRxMs = 0
+    this._tfTimeoutMs = 6000
+    this._tfWatchdog = setInterval(() => this._checkTfTimeout(), 1000)
 
     this._bindConnectionEvents()
   }
@@ -43,10 +83,18 @@ export class RosDataManager extends EventTarget {
       this._goalPoseWriter = null
       this._goalPoseChanId = null
       this._resubscribeAll()
-      this._autoSubscribeTF()
+      if (this._autoSubscribeTFEnabled) this._autoSubscribeTF()
     })
     this.conn.on('disconnect', () => {
       this._emit('connection', { status: 'disconnected' })
+      this._channels.clear()
+      this._emit('channels', { channels: [] })
+      this._clearTFData()
+      this._resetSubChannelsKeepListeners()
+      this._cmdVelWriter = null
+      this._cmdVelChanId = null
+      this._goalPoseWriter = null
+      this._goalPoseChanId = null
     })
     this.conn.on('reconnecting', () => {
       this._emit('connection', { status: 'reconnecting' })
@@ -58,11 +106,23 @@ export class RosDataManager extends EventTarget {
       detail?.channels?.forEach(ch => this._channels.set(ch.id, ch))
       this._emit('channels', { channels: Array.from(this._channels.values()) })
       this._retryPendingSubscriptions()
-      this._autoSubscribeTF()
+      if (this._autoSubscribeTFEnabled) this._autoSubscribeTF()
     })
     this.conn.on('unadvertise', ({ detail }) => {
-      detail?.channelIds?.forEach(id => this._channels.delete(id))
+      const removedTopics = []
+      detail?.channelIds?.forEach(id => {
+        const ch = this._channels.get(id)
+        if (ch?.topic) removedTopics.push(ch.topic)
+        this._channels.delete(id)
+      })
       this._emit('channels', { channels: Array.from(this._channels.values()) })
+
+      if (removedTopics.includes('/tf') || removedTopics.includes('/tf_static')) {
+        this._forceUnsubscribeTopic('/tf')
+        this._forceUnsubscribeTopic('/tf_static')
+        this._clearTFData()
+        if (this._autoSubscribeTFEnabled && this.conn.isConnected) this._autoSubscribeTF()
+      }
     })
     this.conn.on('message', ({ detail }) => {
       this._onBinaryMessage(detail)
@@ -122,6 +182,31 @@ export class RosDataManager extends EventTarget {
   /** Get all known TF frame IDs */
   getFrames() { return Array.from(this.allFrames) }
 
+  setAutoSubscribeTF(enabled) {
+    this._autoSubscribeTFEnabled = !!enabled
+    if (this._autoSubscribeTFEnabled) {
+      if (this.conn.isConnected) this._autoSubscribeTF()
+    } else {
+      this._forceUnsubscribeTopic('/tf')
+      this._forceUnsubscribeTopic('/tf_static')
+      this._clearTFData()
+    }
+  }
+
+  // ── Publishers lifecycle ───────────────────────────────────────────
+
+  releaseCmdVelPublisher() {
+    if (this._cmdVelChanId) this.conn.unadvertise(this._cmdVelChanId)
+    this._cmdVelWriter = null
+    this._cmdVelChanId = null
+  }
+
+  releaseGoalPosePublisher() {
+    if (this._goalPoseChanId) this.conn.unadvertise(this._goalPoseChanId)
+    this._goalPoseWriter = null
+    this._goalPoseChanId = null
+  }
+
   /**
    * Publish geometry_msgs/Twist to /cmd_vel
    * CDR encoding via MessageWriter
@@ -135,15 +220,9 @@ export class RosDataManager extends EventTarget {
       return
     }
 
-    // 首次：advertise + 构建 MessageWriter
-    // /cmd_vel 是客户端发布话题，服务端不会 advertise 回来，需按 schemaName 查找同类型 channel 获取 schema
     const ch = Array.from(this._channels.values()).find(
       c => c.schemaName === 'geometry_msgs/msg/Twist' && c.schema
     )
-    if (!ch?.schema) {
-      console.warn('[RosDataManager] no Twist schema available yet, channels:', Array.from(this._channels.values()).map(c => c.topic))
-      return
-    }
 
     const chanId = this.conn.advertise({
       topic:      '/cmd_vel',
@@ -153,10 +232,10 @@ export class RosDataManager extends EventTarget {
     if (!chanId) return
 
     try {
-      const msgDef = parse(ch.schema, { ros2: true })
+      const msgDef = parse(ch?.schema || TWIST_SCHEMA_FALLBACK, { ros2: true })
       this._cmdVelWriter  = new MessageWriter(msgDef)
       this._cmdVelChanId  = chanId
-      console.log('[RosDataManager] cmd_vel ready, chanId=', chanId, 'schema from topic:', ch.topic)
+      console.log('[RosDataManager] cmd_vel ready, chanId=', chanId, ch?.topic ? `schema from topic: ${ch.topic}` : 'schema from fallback')
       this._sendCmdVelCdr(linear, angular)
     } catch(e) {
       console.warn('[RosDataManager] cmd_vel setup error', e)
@@ -191,10 +270,6 @@ export class RosDataManager extends EventTarget {
     const ch = Array.from(this._channels.values()).find(
       c => c.schemaName === 'geometry_msgs/msg/PoseStamped' && c.schema
     )
-    if (!ch?.schema) {
-      console.warn('[RosDataManager] no PoseStamped schema available yet')
-      return
-    }
 
     const chanId = this.conn.advertise({
       topic: '/goal_pose',
@@ -204,9 +279,10 @@ export class RosDataManager extends EventTarget {
     if (!chanId) return
 
     try {
-      const msgDef = parse(ch.schema, { ros2: true })
+      const msgDef = parse(ch?.schema || POSE_STAMPED_SCHEMA_FALLBACK, { ros2: true })
       this._goalPoseWriter = new MessageWriter(msgDef)
       this._goalPoseChanId = chanId
+      console.log('[RosDataManager] goal_pose ready, chanId=', chanId, ch?.topic ? `schema from topic: ${ch.topic}` : 'schema from fallback')
       this._sendGoalPoseCdr({ x, y, yaw, frameId })
     } catch (e) {
       console.warn('[RosDataManager] goal_pose setup error', e)
@@ -241,6 +317,42 @@ export class RosDataManager extends EventTarget {
   }
 
   // ── Internal: subscribe/unsubscribe wire ──────────────────────────────
+
+  _resetSubChannelsKeepListeners() {
+    for (const entry of this._subs.values()) {
+      if (entry.subId) this._subIdToTopic.delete(entry.subId)
+      entry.channelId = null
+      entry.subId = null
+    }
+  }
+
+  _forceUnsubscribeTopic(topic) {
+    const entry = this._subs.get(topic)
+    if (!entry) return
+    if (entry.subId) {
+      this._subIdToTopic.delete(entry.subId)
+      this.conn.send({ op: 'unsubscribe', subscriptionIds: [entry.subId] })
+    }
+    this._subs.delete(topic)
+  }
+
+  _clearTFData() {
+    this.tfTree.clear()
+    this.allFrames.clear()
+    this._staticTF.clear()
+    this._dynamicTF.clear()
+    this._tfLastRxMs = 0
+    try { getTfManager().clear?.() } catch (_) {}
+    this._emit('tf', { tree: this.tfTree, frames: [] })
+  }
+
+  _checkTfTimeout() {
+    if (!this._autoSubscribeTFEnabled) return
+    if (!this.conn?.isConnected) return
+    if (!this._tfLastRxMs) return
+    if (Date.now() - this._tfLastRxMs <= this._tfTimeoutMs) return
+    this._clearTFData()
+  }
 
   _sendSubscribe(topic) {
     const ch = Array.from(this._channels.values()).find(c => c.topic === topic)
@@ -362,6 +474,7 @@ export class RosDataManager extends EventTarget {
   _processTF(topic, tfMsg) {
     const isStatic = topic === '/tf_static'
     const transforms = tfMsg?.transforms || []
+    if (transforms.length) this._tfLastRxMs = Date.now()
     transforms.forEach(tf => {
       const child  = tf.child_frame_id
       const parent = tf.header?.frame_id || 'world'

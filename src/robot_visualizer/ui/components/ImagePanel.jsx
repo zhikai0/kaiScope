@@ -14,6 +14,17 @@ export default function ImagePanel({ topic = '/camera/image_raw' }) {
   const [err,  setErr]    = useState(null)
   const fpsRef = useRef({ count: 0, last: Date.now() })
 
+  const bumpFps = () => {
+    const f = fpsRef.current
+    f.count++
+    const now = Date.now()
+    if (now - f.last >= 1000) {
+      setFps(f.count)
+      f.count = 0
+      f.last  = now
+    }
+  }
+
   const { status, subscribe } = useRos()
 
   useEffect(() => {
@@ -28,26 +39,46 @@ export default function ImagePanel({ topic = '/camera/image_raw' }) {
         return
       }
 
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const ctx = canvas.getContext('2d')
+
+      // sensor_msgs/CompressedImage
+      if (msg.format && msg.data && !msg.width && !msg.height) {
+        try {
+          const bytes = msg.data instanceof Uint8Array ? msg.data : new Uint8Array(msg.data)
+          const mime = (typeof msg.format === 'string' && msg.format.includes('png')) ? 'image/png' : 'image/jpeg'
+          const blob = new Blob([bytes], { type: mime })
+          const url = URL.createObjectURL(blob)
+          const img = new Image()
+          img.onload = () => {
+            canvas.width = img.naturalWidth
+            canvas.height = img.naturalHeight
+            ctx.drawImage(img, 0, 0)
+            bumpFps()
+            setInfo({ width: img.naturalWidth, height: img.naturalHeight, encoding: `compressed(${msg.format})` })
+            URL.revokeObjectURL(url)
+            setErr(null)
+          }
+          img.onerror = () => {
+            URL.revokeObjectURL(url)
+            setErr('Compressed image decode failed')
+          }
+          img.src = url
+        } catch (e) {
+          setErr(`Compressed image decode error: ${e.message}`)
+        }
+        return
+      }
+
       const { width, height, encoding, data } = msg
       if (!width || !height || !data) { setErr('Invalid image message'); return }
 
       setInfo({ width, height, encoding })
+      bumpFps()
 
-      // FPS counter
-      const f = fpsRef.current
-      f.count++
-      const now = Date.now()
-      if (now - f.last >= 1000) {
-        setFps(f.count)
-        f.count = 0
-        f.last  = now
-      }
-
-      const canvas = canvasRef.current
-      if (!canvas) return
       canvas.width  = width
       canvas.height = height
-      const ctx = canvas.getContext('2d')
 
       // Convert raw bytes to ImageData
       try {
@@ -70,11 +101,35 @@ export default function ImagePanel({ topic = '/camera/image_raw' }) {
             imgData.data[j] = imgData.data[j+1] = imgData.data[j+2] = bytes[i]
             imgData.data[j+3] = 255
           }
-        } else if (encoding === 'mono16') {
+        } else if (encoding === 'mono16' || encoding === '16UC1') {
           imgData = new ImageData(width, height)
-          for (let i = 0, j = 0; i < bytes.length; i += 2, j += 4) {
-            const v = (bytes[i] | (bytes[i+1] << 8)) >> 8
-            imgData.data[j] = imgData.data[j+1] = imgData.data[j+2] = v
+          for (let i = 0, j = 0; i + 1 < bytes.length && j < imgData.data.length; i += 2, j += 4) {
+            const v16 = (bytes[i] | (bytes[i+1] << 8))
+            const v8 = Math.max(0, Math.min(255, v16 >> 8))
+            imgData.data[j] = imgData.data[j+1] = imgData.data[j+2] = v8
+            imgData.data[j+3] = 255
+          }
+        } else if (encoding === '32FC1') {
+          imgData = new ImageData(width, height)
+          const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+          let min = Number.POSITIVE_INFINITY
+          let max = 0
+          const vals = new Float32Array(width * height)
+          for (let p = 0; p < vals.length; p++) {
+            const off = p * 4
+            if (off + 3 >= bytes.byteLength) break
+            const v = dv.getFloat32(off, true)
+            vals[p] = Number.isFinite(v) && v > 0 ? v : 0
+            if (vals[p] > 0) {
+              if (vals[p] < min) min = vals[p]
+              if (vals[p] > max) max = vals[p]
+            }
+          }
+          const span = (max > min) ? (max - min) : 1
+          for (let p = 0, j = 0; p < vals.length; p++, j += 4) {
+            const norm = vals[p] > 0 ? (vals[p] - min) / span : 0
+            const g = Math.max(0, Math.min(255, Math.round(norm * 255)))
+            imgData.data[j] = imgData.data[j+1] = imgData.data[j+2] = g
             imgData.data[j+3] = 255
           }
         } else {

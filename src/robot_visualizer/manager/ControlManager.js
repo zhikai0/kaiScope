@@ -113,6 +113,8 @@ export class ControlManager {
     this._curAngular    = 0
     this._clearTimer()
     this._publish()
+    const mgr = getRosDataManager()
+    mgr?.releaseCmdVelPublisher?.()
   }
 
   // ── 内部 ─────────────────────────────────────────────────────

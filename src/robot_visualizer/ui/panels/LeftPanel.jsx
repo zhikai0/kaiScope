@@ -517,7 +517,7 @@ const DEFAULT_DISPLAYS = [
   { uid:'path-1',    id:'path',       label:'Path',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'〰' },
 ]
 
-export default function LeftPanel({ visible: visibleProp, onVisibleChange, onImageAdd, onImageRemove }) {
+export default function LeftPanel({ visible: visibleProp, onVisibleChange, onImageAdd, onImageRemove, onImageTopicChange }) {
   const [_vis, _setVis]       = useState(true)
   const visible    = visibleProp!==undefined ? visibleProp : _vis
   const setVisible = (v) => { _setVis(v); onVisibleChange&&onVisibleChange(v) }
@@ -557,6 +557,11 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   }, [])
 
   const { channels: liveChannels, mgr: rosMgr } = useRos()
+
+  useEffect(() => {
+    const tfEnabled = displays.some(item => item.id === 'tf' && item.checked)
+    rosMgr?.setAutoSubscribeTF?.(tfEnabled)
+  }, [displays, rosMgr])
 
   // 初始化 DisplayManager：连接数据层，注册默认 displays
   useEffect(() => {
@@ -620,7 +625,8 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
 
   const handleAdd    = useCallback((dt) => {
     const uid = `${dt.id}-${Date.now()}`
-    const initParams = dt.topicOverride ? { topic: dt.topicOverride } : {}
+    const initTopic = dt.topicOverride || (dt.id === 'image' ? '/camera/image_raw' : '')
+    const initParams = initTopic ? { topic: initTopic } : {}
     const newDisp = {uid,...dt,checked:true,params:initParams}
     setDisplays(prev => [...prev, newDisp])
 
@@ -628,13 +634,19 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     getDisplayManager().addDisplay(newDisp)
 
     // 2. 如果是 TF 或 Map，确保其对应的全局管理器/Store 被启用
-    if (dt.id === 'tf') getTfDisplayManager().setEnabled(true)
+    if (dt.id === 'tf') {
+      getTfDisplayManager().setEnabled(true)
+      rosMgr?.setAutoSubscribeTF?.(true)
+    }
     if (dt.id === 'map') setMapEnabled(true)
 
     // 3. 如果有 topicOverride，立即通知 DisplayManager 订阅
-    if (dt.topicOverride) getDisplayManager().updateParam(uid, 'topic', dt.topicOverride)
-    if (dt.id==='image'&&onImageAdd) onImageAdd(uid)
-  }, [onImageAdd, setMapEnabled])
+    if (initTopic) getDisplayManager().updateParam(uid, 'topic', initTopic)
+    if (dt.id==='image') {
+      onImageAdd?.(uid, initTopic)
+      onImageTopicChange?.(uid, initTopic)
+    }
+  }, [onImageAdd, onImageTopicChange, rosMgr, setMapEnabled])
   const handleDelete = useCallback(() => {
     if (!selectedUid) return
     const d = displays.find(x => x.uid === selectedUid)
@@ -652,8 +664,9 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     const tfEnabled = nextDisplays.some(item => item.id === 'tf' && item.checked)
     const mapEnabledNext = nextDisplays.some(item => item.id === 'map' && item.checked)
     getTfDisplayManager().setEnabled(tfEnabled)
+    rosMgr?.setAutoSubscribeTF?.(tfEnabled)
     setMapEnabled(mapEnabledNext)
-  }, [selectedUid, displays, setMapEnabled, onImageRemove])
+  }, [selectedUid, displays, rosMgr, setMapEnabled, onImageRemove])
   const handleRename = useCallback(() => {
     if (!selectedUid) return
     const d = displays.find(x => x.uid === selectedUid)
@@ -680,8 +693,9 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     const tfEnabled = nextDisplays.some(item => item.id === 'tf' && item.checked)
     const mapEnabledNext = nextDisplays.some(item => item.id === 'map' && item.checked)
     getTfDisplayManager().setEnabled(tfEnabled)
+    rosMgr?.setAutoSubscribeTF?.(tfEnabled)
     setMapEnabled(mapEnabledNext)
-  }, [displays, setMapEnabled])
+  }, [displays, rosMgr, setMapEnabled])
 
   const renderParams = (d) => {
     if (d.id==='global') return (
@@ -752,7 +766,23 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
         <PR label="Point Size" indent={1}><PNum defaultValue={d.params?.pointSize??0.04} step={0.01} min={0.005} onChange={e => getDisplayManager().updateParam(d.uid,'pointSize',parseFloat(e.target.value)||0.04)}/></PR>
       </>
     )
-    if (d.id==='image') return (<><PR label="Topic" indent={1}><TopicSelect value={d.topicOverride||'/camera/image_raw'} liveTopics={liveChannels} allowedDisplayType="image"/></PR><PR label="Transport" indent={1}><PSelect><option>raw</option><option>compressed</option></PSelect></PR></>)
+    if (d.id==='image') return (
+      <>
+        <PR label="Topic" indent={1}>
+          <TopicSelect
+            value={d.params?.topic || '/camera/image_raw'}
+            liveTopics={liveChannels}
+            allowedDisplayType="image"
+            onChange={v => {
+              getDisplayManager().updateParam(d.uid, 'topic', v)
+              setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, topic:v}} : x))
+              onImageTopicChange?.(d.uid, v)
+            }}
+          />
+        </PR>
+        <PR label="Transport" indent={1}><PSelect><option>raw</option><option>compressed</option></PSelect></PR>
+      </>
+    )
     if (d.id==='marker') return <PR label="Topic" indent={1}><TopicSelect value="/visualization_marker" liveTopics={liveChannels} allowedDisplayType="marker"/></PR>
     return null
   }

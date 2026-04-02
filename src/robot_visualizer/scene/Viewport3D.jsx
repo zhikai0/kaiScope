@@ -652,6 +652,7 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
       controls.enabled = prevControlsEnabled
       dom.style.cursor = ''
       cleanupPreview()
+      getRosDataManager()?.releaseGoalPosePublisher?.()
     }
 
     return () => {
@@ -661,6 +662,7 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
       dom.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       cleanupPreview()
+      if (!goalPoseMode) getRosDataManager()?.releaseGoalPosePublisher?.()
     }
   }, [goalPoseMode, onGoalPoseComplete])
 

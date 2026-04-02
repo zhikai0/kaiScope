@@ -51,6 +51,11 @@ export class TfManager extends EventTarget {
 
   destroy() { clearInterval(this._timer) }
 
+  clear() {
+    this._tf.clear()
+    this._emit('update', { frames: [] })
+  }
+
   // ── Ingestion ─────────────────────────────────────────────────────────
   processTFMessage(tfMsg, isStatic = false) {
     const tfs = tfMsg?.transforms || []

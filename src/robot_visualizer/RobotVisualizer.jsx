@@ -97,6 +97,7 @@ const removeImageLeafByUid = (node, uid) => {
 
 export default function RobotVisualizer({ onBack }) {
   const [layout, setLayout] = useState({ kind: 'leaf', ptype: '3d' })
+  const [imageTopics, setImageTopics] = useState({})
   const [displaysVisible, setDisplaysVisible] = useState(true)
   const [controlMode, setControlMode] = useState(false)
   const [goalPoseMode, setGoalPoseMode] = useState(false)
@@ -123,7 +124,8 @@ export default function RobotVisualizer({ onBack }) {
     }))
   }
 
-  const splitImage = useCallback((displayUid) => {
+  const splitImage = useCallback((displayUid, topic = '/camera/image_raw') => {
+    setImageTopics(prev => ({ ...prev, [displayUid]: topic }))
     setLayout(prev => {
       if (countLeafType(prev, 'image') >= 4) return prev
       return appendImagePanel(prev, { kind: 'leaf', ptype: 'image', displayUid })
@@ -131,17 +133,29 @@ export default function RobotVisualizer({ onBack }) {
   }, [])
 
   const removeImage = useCallback((displayUid) => {
+    setImageTopics(prev => {
+      const next = { ...prev }
+      delete next[displayUid]
+      return next
+    })
     setLayout(prev => {
       const next = removeImageLeafByUid(prev, displayUid)
       return next || { kind: 'leaf', ptype: '3d' }
     })
   }, [])
 
-  const renderPanel = (ptype, pt) => {
+  const handleImageTopicChange = useCallback((displayUid, topic) => {
+    setImageTopics(prev => ({ ...prev, [displayUid]: topic || '/camera/image_raw' }))
+  }, [])
+
+  const renderPanel = (ptype, pt, panelNode) => {
     if (ptype === '3d') {
       return <Viewport3D goalPoseMode={goalPoseMode} onGoalPoseComplete={() => setGoalPoseMode(false)} />
     }
-    if (ptype === 'image') return <ImagePanel />
+    if (ptype === 'image') {
+      const topic = panelNode?.displayUid ? (imageTopics[panelNode.displayUid] || '/camera/image_raw') : '/camera/image_raw'
+      return <ImagePanel topic={topic} />
+    }
     return (
       <div className="pcell-placeholder">
         <span className="pp-icon">{pt.icon}</span>
@@ -178,6 +192,7 @@ export default function RobotVisualizer({ onBack }) {
         onVisibleChange={setDisplaysVisible}
         onImageAdd={splitImage}
         onImageRemove={removeImage}
+        onImageTopicChange={handleImageTopicChange}
       />
 
       {isSingle && (

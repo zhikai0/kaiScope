@@ -62,6 +62,7 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel 
     return (
       <PanelCell
         ptype={node.ptype}
+        panelNode={node}
         panelTypes={panelTypes}
         canClose={totalPanels > 1}
         hideHeader={totalPanels === 1}

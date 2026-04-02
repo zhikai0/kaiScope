@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 export function PanelCell({
   ptype,
+  panelNode,
   panelTypes,
   canClose,
   hideHeader,
@@ -52,7 +53,7 @@ export function PanelCell({
       )}
 
       <div className="pcell-body" onClick={menuOpen ? () => setMenuOpen(false) : undefined}>
-        {renderPanel(ptype, pt)}
+        {renderPanel(ptype, pt, panelNode)}
       </div>
     </div>
   )
