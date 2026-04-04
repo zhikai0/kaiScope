@@ -36,7 +36,7 @@ const removeLeafAtPath = (node, path) => {
 
 let nodeRootRef = { current: null }
 
-function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel }) {
+function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel, onImagePanelClose }) {
   const wrapRef = useRef(null)
 
   if (isLeaf(node)) {
@@ -46,12 +46,13 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel 
         dir,
         ratio: 0.5,
         a: leaf,
-        b: { kind: 'leaf', ptype: '3d' },
+        b: { kind: 'leaf', ptype: '3d', panelId: `panel-${Date.now()}` },
       })))
     }
 
     const handleClose = () => {
       if (totalPanels <= 1) return
+      if (node.ptype === 'image' && node.displayUid) onImagePanelClose?.(node.displayUid)
       onUpdate(removeLeafAtPath(nodeRootRef.current, path))
     }
 
@@ -70,7 +71,8 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel 
         onSplitV={() => handleSplit('v')}
         onClose={handleClose}
         onChangeType={handleChangeType}
-        renderPanel={renderPanel}
+        renderPanel={(ptype, pt, panelNode) => renderPanel(ptype, pt, panelNode, node.panelId || path.join('-') || 'root')}
+        onImagePanelClose={onImagePanelClose}
       />
     )
   }
@@ -111,6 +113,7 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel 
           onUpdate={onUpdate}
           panelTypes={panelTypes}
           renderPanel={renderPanel}
+          onImagePanelClose={onImagePanelClose}
         />
       </div>
 
@@ -124,13 +127,14 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel 
           onUpdate={onUpdate}
           panelTypes={panelTypes}
           renderPanel={renderPanel}
+          onImagePanelClose={onImagePanelClose}
         />
       </div>
     </div>
   )
 }
 
-export function PanelLayout({ layout, onUpdate, panelTypes, renderPanel }) {
+export function PanelLayout({ layout, onUpdate, panelTypes, renderPanel, onImagePanelClose }) {
   nodeRootRef.current = layout
   const totalPanels = countLeaves(layout)
 
@@ -143,6 +147,7 @@ export function PanelLayout({ layout, onUpdate, panelTypes, renderPanel }) {
         onUpdate={onUpdate}
         panelTypes={panelTypes}
         renderPanel={renderPanel}
+        onImagePanelClose={onImagePanelClose}
       />
     </div>
   )

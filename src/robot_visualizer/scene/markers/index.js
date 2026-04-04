@@ -132,7 +132,9 @@ export class MarkerManager {
   }
 
   /** 销毁全部 Marker，释放 GPU 资源 */
-  dispose() {
-    this._markers.forEach((m, key) => this.remove(key))
+  dispose(filterFn = null) {
+    this._markers.forEach((m, key) => {
+      if (!filterFn || filterFn(key, m)) this.remove(key)
+    })
   }
 }

@@ -1,7 +1,7 @@
 /**
  * RobotVisualizer.jsx — Robot Visualizer 主组件
  */
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import TopNav from './ui/panels/TopNav'
 import LeftPanel from './ui/panels/LeftPanel'
 import Viewport3D from './scene/Viewport3D'
@@ -80,14 +80,22 @@ const appendImagePanel = (node, imageLeaf) => {
   }
 }
 
-const removeImageLeafByUid = (node, uid) => {
+function hasImagePanel(node, displayUid) {
+  if (!node) return false
+  if (node.kind === 'leaf') {
+    return node.ptype === 'image' && node.displayUid === displayUid
+  }
+  return hasImagePanel(node.a, displayUid) || hasImagePanel(node.b, displayUid)
+}
+
+const removeLeafByPanelId = (node, panelId) => {
   if (!node) return node
   if (node.kind === 'leaf') {
-    return node.ptype === 'image' && node.displayUid === uid ? null : node
+    return node.panelId === panelId ? null : node
   }
 
-  const nextA = removeImageLeafByUid(node.a, uid)
-  const nextB = removeImageLeafByUid(node.b, uid)
+  const nextA = removeLeafByPanelId(node.a, panelId)
+  const nextB = removeLeafByPanelId(node.b, panelId)
 
   if (!nextA && !nextB) return null
   if (!nextA) return nextB
@@ -95,9 +103,62 @@ const removeImageLeafByUid = (node, uid) => {
   return { ...node, a: nextA, b: nextB }
 }
 
+const normalizeLayoutImages = (node, imageTopics, nextTopics = imageTopics, changed = false) => {
+  if (!node) return { node, imageTopics: nextTopics, changed }
+
+  if (node.kind === 'leaf') {
+    if (node.ptype !== 'image') return { node, imageTopics: nextTopics, changed }
+    const panelId = node.panelId || `panel-${Date.now()}`
+    const displayUid = node.displayUid || `layout-image-${panelId}`
+
+    let topicMap = nextTopics
+    let topicChanged = changed
+    if (!(displayUid in topicMap)) {
+      topicMap = { ...topicMap, [displayUid]: '/camera/image_raw' }
+      topicChanged = true
+    }
+
+    if (node.panelId === panelId && node.displayUid === displayUid) {
+      return { node, imageTopics: topicMap, changed: topicChanged }
+    }
+
+    return {
+      node: { ...node, panelId, displayUid },
+      imageTopics: topicMap,
+      changed: true,
+    }
+  }
+
+  const left = normalizeLayoutImages(node.a, imageTopics, nextTopics, changed)
+  const right = normalizeLayoutImages(node.b, imageTopics, left.imageTopics, left.changed)
+
+  if (!right.changed && left.node === node.a && right.node === node.b) {
+    return { node, imageTopics: right.imageTopics, changed: false }
+  }
+
+  return {
+    node: { ...node, a: left.node, b: right.node },
+    imageTopics: right.imageTopics,
+    changed: true,
+  }
+}
+
+const collectLayoutImageDisplays = (node, acc = []) => {
+  if (!node) return acc
+  if (node.kind === 'leaf') {
+    if (node.ptype === 'image' && node.displayUid) acc.push({ displayUid: node.displayUid, panelId: node.panelId })
+    return acc
+  }
+  collectLayoutImageDisplays(node.a, acc)
+  collectLayoutImageDisplays(node.b, acc)
+  return acc
+}
+
 export default function RobotVisualizer({ onBack }) {
   const [layout, setLayout] = useState({ kind: 'leaf', ptype: '3d' })
+  const viewportPanelIdRef = useRef('main-3d')
   const [imageTopics, setImageTopics] = useState({})
+  const [closedImageUid, setClosedImageUid] = useState(null)
   const [displaysVisible, setDisplaysVisible] = useState(true)
   const [controlMode, setControlMode] = useState(false)
   const [goalPoseMode, setGoalPoseMode] = useState(false)
@@ -120,15 +181,15 @@ export default function RobotVisualizer({ onBack }) {
       dir: 'v',
       ratio: 0.5,
       a: prev,
-      b: { kind: 'leaf', ptype: '3d' },
+      b: { kind: 'leaf', ptype: '3d', panelId: `panel-${Date.now()}` },
     }))
   }
 
-  const splitImage = useCallback((displayUid, topic = '/camera/image_raw') => {
+  const splitImage = useCallback((displayUid, topic = '') => {
     setImageTopics(prev => ({ ...prev, [displayUid]: topic }))
     setLayout(prev => {
       if (countLeafType(prev, 'image') >= 4) return prev
-      return appendImagePanel(prev, { kind: 'leaf', ptype: 'image', displayUid })
+      return appendImagePanel(prev, { kind: 'leaf', ptype: 'image', displayUid, panelId: `image-${displayUid}` })
     })
   }, [])
 
@@ -139,22 +200,62 @@ export default function RobotVisualizer({ onBack }) {
       return next
     })
     setLayout(prev => {
-      const next = removeImageLeafByUid(prev, displayUid)
+      const next = removeLeafByPanelId(prev, `image-${displayUid}`)
       return next || { kind: 'leaf', ptype: '3d' }
     })
+  }, [])
+
+  const setImageVisible = useCallback((displayUid, visible) => {
+    if (visible) {
+      setLayout(prev => {
+        if (hasImagePanel(prev, displayUid)) return prev
+        return appendImagePanel(prev, { kind: 'leaf', ptype: 'image', displayUid, panelId: `image-${displayUid}` })
+      })
+      return
+    }
+
+    setLayout(prev => {
+      const next = removeLeafByPanelId(prev, `image-${displayUid}`)
+      return next || { kind: 'leaf', ptype: '3d' }
+    })
+  }, [])
+
+  const handleImagePanelClose = useCallback((displayUid) => {
+    setImageTopics(prev => {
+      const next = { ...prev }
+      delete next[displayUid]
+      return next
+    })
+    setClosedImageUid(displayUid)
   }, [])
 
   const handleImageTopicChange = useCallback((displayUid, topic) => {
     setImageTopics(prev => ({ ...prev, [displayUid]: topic || '/camera/image_raw' }))
   }, [])
 
-  const renderPanel = (ptype, pt, panelNode) => {
+  useEffect(() => {
+    const normalized = normalizeLayoutImages(layout, imageTopics)
+    if (normalized.changed && normalized.node !== layout) {
+      setLayout(normalized.node)
+      return
+    }
+
+    if (normalized.imageTopics !== imageTopics) {
+      setImageTopics(normalized.imageTopics)
+    }
+  }, [layout, imageTopics])
+
+  const layoutImageDisplays = collectLayoutImageDisplays(layout)
+
+  const renderPanel = (ptype, pt, panelNode, panelKey) => {
     if (ptype === '3d') {
-      return <Viewport3D goalPoseMode={goalPoseMode} onGoalPoseComplete={() => setGoalPoseMode(false)} />
+      const panelId = panelNode?.panelId || viewportPanelIdRef.current
+      if (!panelNode?.panelId) viewportPanelIdRef.current = panelId
+      return <Viewport3D key={panelKey || panelId} panelId={panelId} goalPoseMode={goalPoseMode} onGoalPoseComplete={() => setGoalPoseMode(false)} />
     }
     if (ptype === 'image') {
-      const topic = panelNode?.displayUid ? (imageTopics[panelNode.displayUid] || '/camera/image_raw') : '/camera/image_raw'
-      return <ImagePanel topic={topic} />
+      const topic = panelNode?.displayUid ? (imageTopics[panelNode.displayUid] || '') : ''
+      return <ImagePanel topic={topic || '/camera/image_raw'} />
     }
     return (
       <div className="pcell-placeholder">
@@ -167,7 +268,13 @@ export default function RobotVisualizer({ onBack }) {
 
   return (
     <div className="app-shell">
-      <PanelLayout layout={layout} onUpdate={setLayout} panelTypes={PANEL_TYPES} renderPanel={renderPanel} />
+      <PanelLayout
+        layout={layout}
+        onUpdate={setLayout}
+        panelTypes={PANEL_TYPES}
+        renderPanel={renderPanel}
+        onImagePanelClose={handleImagePanelClose}
+      />
 
       <VirtualJoystick
         visible={controlMode}
@@ -193,6 +300,10 @@ export default function RobotVisualizer({ onBack }) {
         onImageAdd={splitImage}
         onImageRemove={removeImage}
         onImageTopicChange={handleImageTopicChange}
+        onImageVisibleChange={setImageVisible}
+        closedImageUid={closedImageUid}
+        onClosedImageUidHandled={() => setClosedImageUid(null)}
+        layoutImageDisplays={layoutImageDisplays}
       />
 
       {isSingle && (

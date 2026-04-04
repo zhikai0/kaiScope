@@ -26,12 +26,17 @@ export default function ImagePanel({ topic = '/camera/image_raw' }) {
   }
 
   const { status, subscribe } = useRos()
+  const subscribeRef = useRef(subscribe)
+
+  useEffect(() => {
+    subscribeRef.current = subscribe
+  }, [subscribe])
 
   useEffect(() => {
     if (status !== 'connected') { setErr('Waiting for Foxglove connection…'); return }
     setErr(null)
 
-    const unsub = subscribe(topic, (msg) => {
+    const unsub = subscribeRef.current(topic, (msg) => {
       // msg may be raw bytes object if foxglove parser not installed
       // Try to render if it has width/height/data fields
       if (!msg || msg._raw) {
@@ -143,7 +148,7 @@ export default function ImagePanel({ topic = '/camera/image_raw' }) {
       }
     })
     return () => { unsub && unsub() }
-  }, [topic, status, subscribe])
+  }, [topic, status])
 
   return (
     <div className="img-panel">

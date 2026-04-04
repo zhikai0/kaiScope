@@ -281,26 +281,56 @@ select option {
   opacity: 0.6;
 }
 
+.resize-h-wrap {
+  width: 32px;
+  margin: 0 -16px;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 20;
+  position: relative;
+}
+
 .resize-h {
-  width: 0.5px;
+  width: 2px;
   height: 100%;
   background: var(--glass-border);
   cursor: col-resize;
   transition: background 0.2s;
+  pointer-events: none;
 }
 
+.resize-h-wrap:hover .resize-h,
+.resize-h-wrap:active .resize-h,
 .resize-h:hover {
   background: var(--accent);
 }
 
+.resize-v-wrap {
+  height: 32px;
+  margin: -16px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: row-resize;
+  touch-action: none;
+  z-index: 20;
+  position: relative;
+}
+
 .resize-v {
-  height: 0.5px;
+  height: 2px;
   width: 100%;
   background: var(--glass-border);
   cursor: row-resize;
   transition: background 0.2s;
+  pointer-events: none;
 }
 
+.resize-v-wrap:hover .resize-v,
+.resize-v-wrap:active .resize-v,
 .resize-v:hover {
   background: var(--accent);
 }

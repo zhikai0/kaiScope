@@ -11,6 +11,23 @@
   height: 100%;
 }
 
+.vp-wrap.vp-drop-active::after {
+  content: 'Drop .ply or .pcd to import';
+  position: absolute;
+  inset: 16px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed rgba(79, 195, 247, 0.9);
+  border-radius: 14px;
+  background: rgba(9, 14, 28, 0.32);
+  color: rgba(240, 248, 255, 0.96);
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  pointer-events: none;
+  z-index: 30;
+}
+
 .vp-canvas canvas {
   display: block;
   width: 100% !important;

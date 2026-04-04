@@ -56,6 +56,17 @@ export class TfManager extends EventTarget {
     this._emit('update', { frames: [] })
   }
 
+  clearDynamic() {
+    let changed = false
+    this._tf.forEach((value, child) => {
+      if (!value?.isStatic) {
+        this._tf.delete(child)
+        changed = true
+      }
+    })
+    if (changed) this._emit('update', { frames: this.getFrames() })
+  }
+
   // ── Ingestion ─────────────────────────────────────────────────────────
   processTFMessage(tfMsg, isStatic = false) {
     const tfs = tfMsg?.transforms || []

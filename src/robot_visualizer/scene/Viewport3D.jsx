@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CameraViews } from './views/CameraViews.js'
+import { setupImportedCloudDrop, getImportedAssetStore, importLocalAssetFile } from './importers'
 import { useSimStore } from '../ui/store/simStore'
 import { useMapStore } from '../ui/store/mapStore'
 import { SceneCommandBus } from '../manager/SceneCommandBus'
@@ -13,15 +14,26 @@ import { getRosDataManager } from '../data/getRosDataManager'
 import { getTfDisplayManager } from '../manager/TfDisplayManager'
 import './Viewport3D.css'
 
-let PERSISTED_CAMERA_POS = null
-let PERSISTED_CAMERA_TARGET = null
-let PERSISTED_VIEW_MODE = 'orbit'
-let PERSISTED_AT = 0
+let PERSISTED_VIEWPORT_STATE = new Map()
 
-export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete }) {
+const getPersistedViewportState = (panelId) => {
+  if (!PERSISTED_VIEWPORT_STATE.has(panelId)) {
+    PERSISTED_VIEWPORT_STATE.set(panelId, {
+      cameraPos: null,
+      cameraTarget: null,
+      viewMode: 'orbit',
+      at: 0,
+    })
+  }
+  return PERSISTED_VIEWPORT_STATE.get(panelId)
+}
+
+export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, onGoalPoseComplete }) {
+  const wrapRef = useRef(null)
   const mountRef = useRef(null)
   const refs     = useRef({})
-  const [viewMode, setViewMode] = useState(PERSISTED_VIEW_MODE)
+  const persistedState = getPersistedViewportState(panelId)
+  const [viewMode, setViewMode] = useState(persistedState.viewMode || 'orbit')
 
   const trajectory    = useSimStore(s => s.trajectory)
   const historyPath   = useSimStore(s => s.historyPath)
@@ -34,9 +46,11 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
 
   // ── Init scene ───────────────────────────────────────────────────────
   useEffect(() => {
-    const el = mountRef.current
-    if (!el) return
+    const mount = mountRef.current
+    const wrap = wrapRef.current
+    if (!mount || !wrap) return
 
+    const el = mount
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(el.clientWidth, el.clientHeight)
@@ -66,10 +80,10 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
     controls.panSpeed = 0.7
 
     const now = Date.now()
-    const persistedFresh = now - PERSISTED_AT < 10_000
-    if (persistedFresh && PERSISTED_CAMERA_POS && PERSISTED_CAMERA_TARGET) {
-      camera.position.copy(PERSISTED_CAMERA_POS)
-      controls.target.copy(PERSISTED_CAMERA_TARGET)
+    const persistedFresh = now - persistedState.at < 10_000
+    if (persistedFresh && persistedState.cameraPos && persistedState.cameraTarget) {
+      camera.position.copy(persistedState.cameraPos)
+      controls.target.copy(persistedState.cameraTarget)
       controls.update()
     }
 
@@ -111,7 +125,9 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
     // 路径 / 历史轨迹 group（保留，用于 path display）
     const trajGroup = new THREE.Group()
     const histGroup = new THREE.Group()
-    rosRoot.add(trajGroup, histGroup)
+    const importedGroup = new THREE.Group()
+    importedGroup.name = 'importers'
+    rosRoot.add(trajGroup, histGroup, importedGroup)
 
     // ── Marker 管理器（挂在 rosRoot 下，自动享受坐标系变换） ──────────
     const markerManager = new MarkerManager(rosRoot)
@@ -131,9 +147,161 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
       return null
     }
 
-    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot }
+    const applyImportedAssetState = (child, asset) => {
+      if (!child || !asset) return
+      const params = asset.params || {}
+      const scale = Math.max(0.001, params.scale ?? 1)
+      const autoScale = child.userData?.importedAsset?.autoScale ?? 1
+      child.scale.setScalar(autoScale * scale)
 
-    // ── Animation loop ───────────────────────────────────────────────────
+      const basePosition = child.userData?.importedAsset?.basePosition || new THREE.Vector3()
+      const pose = {
+        position: {
+          x: basePosition.x + (params.x ?? 0),
+          y: basePosition.y + (params.y ?? 0),
+          z: basePosition.z + (params.z ?? 0),
+        },
+        orientation: new THREE.Quaternion().setFromEuler(new THREE.Euler(
+          THREE.MathUtils.degToRad(params.rx ?? 0),
+          THREE.MathUtils.degToRad(params.ry ?? 0),
+          THREE.MathUtils.degToRad(params.rz ?? 0),
+          'XYZ'
+        )),
+      }
+
+      child.position.set(pose.position.x, pose.position.y, pose.position.z)
+      child.quaternion.copy(pose.orientation)
+      child.visible = asset.visible ?? true
+
+      const importedAxesKey = `importedasset_axes_${asset.uid}`
+      if (params.showAxes) {
+        const markerManager = refs.current.markerManager
+        if (markerManager && !markerManager.get(importedAxesKey)) {
+          markerManager.set(importedAxesKey, 'axes', 'geometry_msgs/msg/Pose', {
+            scale: 0.6,
+            showLabel: false,
+          })
+        }
+        markerManager?.setVisible(importedAxesKey, child.visible)
+        markerManager?.update(importedAxesKey, {
+          position: pose.position,
+          orientation: {
+            x: pose.orientation.x,
+            y: pose.orientation.y,
+            z: pose.orientation.z,
+            w: pose.orientation.w,
+          },
+        })
+      } else {
+        refs.current.markerManager?.remove(importedAxesKey)
+      }
+
+      child.traverse((node) => {
+        if (!node.material) return
+        const materials = Array.isArray(node.material) ? node.material : [node.material]
+        materials.forEach((material) => {
+          material.transparent = (params.opacity ?? 1) < 1
+          material.opacity = params.opacity ?? 1
+          if ('size' in material && params.pointSize !== undefined) {
+            const pointCount = child.userData?.importedAsset?.pointCount ?? asset.pointCount ?? 0
+            const requestedSize = Math.max(0.001, params.pointSize)
+            const sizeCap = pointCount > 500000 ? 0.12 : pointCount > 200000 ? 0.2 : 1.5
+            material.size = Math.min(requestedSize, sizeCap)
+            material.sizeAttenuation = requestedSize <= 0.2
+          }
+          if (material.color) {
+            const canUseEmbedded = !!node.userData?._embeddedVertexColors
+            if ((params.colorMode || 'embedded') === 'solid' || !canUseEmbedded) {
+              material.vertexColors = false
+              material.color.set(params.color || '#d7f0ff')
+            } else {
+              material.vertexColors = true
+              material.color.set('#ffffff')
+            }
+          }
+          material.needsUpdate = true
+        })
+      })
+
+      refs.current.renderer?.render?.(refs.current.scene, refs.current.camera)
+    }
+
+    const cloneImportedAsset = (asset) => {
+      const sourceObject = asset?.sourceObject
+      if (!sourceObject) return null
+      const clone = sourceObject.clone(true)
+      clone.userData = {
+        ...clone.userData,
+        importedAsset: {
+          ...(sourceObject.userData?.importedAsset || {}),
+          ...(clone.userData?.importedAsset || {}),
+          uid: asset.uid,
+          version: asset.version,
+        },
+      }
+      clone.traverse((node) => {
+        node.userData = {
+          ...node.userData,
+          ...(node.userData || {}),
+        }
+      })
+      applyImportedAssetState(clone, asset)
+      return clone
+    }
+
+    const syncImportedAssets = (assets) => {
+      const group = refs.current.importedGroup
+      if (!group) return
+
+      const incoming = new Map((assets || []).map(asset => [asset.uid, asset]))
+
+      group.children.slice().forEach((child) => {
+        const uid = child.userData?.importedAsset?.uid
+        if (!incoming.has(uid)) {
+          refs.current.markerManager?.remove(`importedasset_axes_${uid}`)
+          group.remove(child)
+          child.traverse?.((node) => {
+            if (node.geometry?.dispose) node.geometry.dispose()
+            if (node.material) {
+              const materials = Array.isArray(node.material) ? node.material : [node.material]
+              materials.forEach(material => material?.dispose?.())
+            }
+          })
+        }
+      })
+
+      incoming.forEach((asset, uid) => {
+        let child = group.children.find(item => item.userData?.importedAsset?.uid === uid)
+        const childVersion = child?.userData?.importedAsset?.version ?? null
+        const assetVersion = asset?.version ?? null
+
+        if (child && childVersion !== assetVersion) {
+          refs.current.markerManager?.remove(`importedasset_axes_${uid}`)
+          group.remove(child)
+          child.traverse?.((node) => {
+            if (node.geometry?.dispose) node.geometry.dispose()
+            if (node.material) {
+              const materials = Array.isArray(node.material) ? node.material : [node.material]
+              materials.forEach(material => material?.dispose?.())
+            }
+          })
+          child = null
+        }
+
+        if (!child) {
+          child = cloneImportedAsset(asset)
+          if (!child) return
+          group.add(child)
+        }
+        applyImportedAssetState(child, asset)
+      })
+    }
+
+    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, importedGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot }
+    const importedAssetStore = getImportedAssetStore()
+    syncImportedAssets(importedAssetStore.getAssets())
+    const unsubscribeImportedAssets = importedAssetStore.onChange(syncImportedAssets)
+
     const clock = new THREE.Clock()
     let animId
     const animate = () => {
@@ -204,12 +372,11 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
     })
     ro.observe(el)
 
-    // ── FPS display (optional) ───────────────────────────────────────────
-    const fpsEl = document.createElement('div')
-    fpsEl.style.cssText = 'position:absolute;top:10px;left:10px;color:#0f0;font-family:monospace;font-size:12px;pointer-events:none;z-index:100'
-    el.appendChild(fpsEl)
+    const cleanupImportedCloudDrop = setupImportedCloudDrop({
+      element: wrap,
+      onImportFile: (file) => importLocalAssetFile(file),
+    })
 
-    // ── Register SceneCommandBus handlers ────────────────────────────────
     const unregs = [
       SceneCommandBus.register('scene:background', ({ color }) => {
         const hex = new THREE.Color(color)
@@ -317,8 +484,8 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
       // ── Marker 系统 ─────────────────────────────────────────────────
       SceneCommandBus.register('scene:reset', () => {
         console.log('[Viewport3D] scene:reset triggered')
-        // 1. Clear all markers
-        refs.current.markerManager?.dispose?.()
+        // 1. Clear non-TF markers，保留静态/动态 TF marker（与 RViz 行为一致）
+        refs.current.markerManager?.dispose?.((key) => !String(key).startsWith('tf_'))
         
         // 2. Clear built-in groups
         if (refs.current.trajGroup) refs.current.trajGroup.clear()
@@ -333,10 +500,7 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
         if (refs.current._urdfInflight) refs.current._urdfInflight.clear()
         if (refs.current._urdfLoadSeq) refs.current._urdfLoadSeq.clear()
 
-        // 4. Reset camera to default
-        refs.current.cameraViews?.setMode('orbit')
-        refs.current._viewMode = 'orbit'
-        setViewMode('orbit')
+        // 4. Keep current camera/view mode
       }),
 
       // 创建 Marker：{ type, key, rosMsgType, options }
@@ -382,6 +546,38 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
       // 切换相机视角：{ mode: 'orbit'|'follow', options? }
       SceneCommandBus.register('scene:view', ({ mode, options }) => {
         refs.current.cameraViews?.setMode(mode, options || {})
+      }),
+
+      SceneCommandBus.register('scene:importedasset:visible', ({ uid, visible }) => {
+        const child = refs.current.importedGroup?.children?.find(item => item.userData?.importedAsset?.uid === uid)
+        if (child) child.visible = visible
+        refs.current.markerManager?.setVisible(`importedasset_axes_${uid}`, visible)
+      }),
+
+      SceneCommandBus.register('scene:importedasset:remove', ({ uid }) => {
+        const importedGroup = refs.current.importedGroup
+        refs.current.markerManager?.remove(`importedasset_axes_${uid}`)
+        if (!importedGroup) return
+        const child = importedGroup.children.find(item => item.userData?.importedAsset?.uid === uid)
+        if (!child) return
+        importedGroup.remove(child)
+        child.traverse?.((node) => {
+          if (node.geometry?.dispose) node.geometry.dispose()
+          if (node.material) {
+            const materials = Array.isArray(node.material) ? node.material : [node.material]
+            materials.forEach(material => material?.dispose?.())
+          }
+        })
+        refs.current.renderer?.render?.(refs.current.scene, refs.current.camera)
+      }),
+
+      SceneCommandBus.register('scene:importedasset:update', ({ uid, params }) => {
+        const child = refs.current.importedGroup?.children?.find(item => item.userData?.importedAsset?.uid === uid)
+        if (!child) return
+        const importedAssetStore = getImportedAssetStore()
+        const asset = importedAssetStore.getAsset(uid)
+        if (!asset) return
+        applyImportedAssetState(child, { ...asset, params })
       }),
 
       // ── URDF 模型加载/销毁 ────────────────────────────────────────
@@ -453,19 +649,21 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
     setTimeout(() => SceneCommandBus.dispatch({ type: 'scene:ready' }), 0)
 
     return () => {
-      PERSISTED_CAMERA_POS = refs.current.camera?.position?.clone?.() || null
-      PERSISTED_CAMERA_TARGET = refs.current.controls?.target?.clone?.() || null
-      PERSISTED_AT = Date.now()
+      persistedState.cameraPos = refs.current.camera?.position?.clone?.() || null
+      persistedState.cameraTarget = refs.current.controls?.target?.clone?.() || null
+      persistedState.viewMode = refs.current._viewMode || viewMode
+      persistedState.at = Date.now()
+      unsubscribeImportedAssets()
       if (animId) cancelAnimationFrame(animId)
       ro.disconnect()
-      if (el && fpsEl && el.contains(fpsEl)) el.removeChild(fpsEl)
+      cleanupImportedCloudDrop()
       unregs.forEach(fn => fn())
       refs.current.markerManager?.dispose()
       refs.current.mapLayer?.dispose()
       renderer.dispose()
       if (el && renderer.domElement && el.contains(renderer.domElement)) el.removeChild(renderer.domElement)
     }
-  }, [])
+  }, [panelId])
 
   // ── Map texture control ──────────────────────────────────────────────
   useEffect(() => {
@@ -490,8 +688,8 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
 
   // ── Camera view mode ───────────────────────────────────────────────
   useEffect(() => {
-    PERSISTED_VIEW_MODE = viewMode
-  }, [viewMode])
+    persistedState.viewMode = viewMode
+  }, [persistedState, viewMode])
 
   useEffect(() => {
     const { cameraViews } = refs.current
@@ -692,8 +890,8 @@ export default function Viewport3D({ goalPoseMode = false, onGoalPoseComplete })
   }, [historyPath, visualization.showHistory])
 
   return (
-    <div className="vp-wrap">
-      <div ref={mountRef} className="vp-canvas" />
+    <div className="vp-wrap" ref={wrapRef}>
+      <div className="vp-canvas" ref={mountRef} />
       <div className="vp-view-select-wrap">
         <select className="vp-view-select" value={viewMode} onChange={e => setViewMode(e.target.value)}>
           <option value="orbit">Orbit</option>

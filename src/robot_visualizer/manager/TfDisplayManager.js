@@ -61,14 +61,14 @@ export class TfDisplayManager {
     }
     getTfManager().on('update', this._onTfUpdate)
 
-    // 场景就绪或重置后再次同步
-    this._onSceneReset = () => {
+    // 场景就绪后再次同步；Reset 不应清空 TF，行为与 RViz 保持一致
+    this._onSceneReady = () => {
       this._activeKeys.clear()
       this._activeArrowKeys.clear()
+      this._lastSync = 0
       this._sync()
     }
-    this._unregSceneReady = SceneCommandBus.register('scene:ready', this._onSceneReset)
-    this._unregSceneReset = SceneCommandBus.register('scene:reset', this._onSceneReset)
+    this._unregSceneReady = SceneCommandBus.register('scene:ready', this._onSceneReady)
 
     // 首次尝试自动设置根帧
     this._autoSetFixedFrame()
@@ -173,6 +173,9 @@ export class TfDisplayManager {
    */
   updateSettings(patch) {
     this.settings = { ...this.settings, ...patch }
+    if (Object.prototype.hasOwnProperty.call(patch, 'allEnabled')) {
+      if (patch.allEnabled) this.hiddenFrames.clear()
+    }
     this._sync()
   }
 
@@ -184,6 +187,10 @@ export class TfDisplayManager {
   setFrameVisible(frameName, visible) {
     if (visible) this.hiddenFrames.delete(frameName)
     else         this.hiddenFrames.add(frameName)
+
+    const frameList = getTfManager().getFrames()
+    this.settings.allEnabled = frameList.length > 0 && this.hiddenFrames.size < frameList.length
+
     // 绕过节流，立即同步（用户主动操作，需要即时响应）
     this._lastSync = 0
     this._sync()
@@ -208,7 +215,6 @@ export class TfDisplayManager {
   destroy() {
     getTfManager().off('update', this._onTfUpdate)
     if (this._unregSceneReady) this._unregSceneReady()
-    if (this._unregSceneReset) this._unregSceneReset()
     this._fixedFrameListeners.clear()
     this._clearAll()
   }

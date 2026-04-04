@@ -65,7 +65,7 @@ export class RosDataManager extends EventTarget {
     this.allFrames   = new Set()
     this._staticTF   = new Map()
     this._dynamicTF  = new Map()   // frame -> { ...transform, lastUpdate }
-    this._tfLastRxMs = 0
+    this._tfDynamicLastRxMs = 0
     this._tfTimeoutMs = 6000
     this._tfWatchdog = setInterval(() => this._checkTfTimeout(), 1000)
 
@@ -341,7 +341,7 @@ export class RosDataManager extends EventTarget {
     this.allFrames.clear()
     this._staticTF.clear()
     this._dynamicTF.clear()
-    this._tfLastRxMs = 0
+    this._tfDynamicLastRxMs = 0
     try { getTfManager().clear?.() } catch (_) {}
     this._emit('tf', { tree: this.tfTree, frames: [] })
   }
@@ -349,9 +349,24 @@ export class RosDataManager extends EventTarget {
   _checkTfTimeout() {
     if (!this._autoSubscribeTFEnabled) return
     if (!this.conn?.isConnected) return
-    if (!this._tfLastRxMs) return
-    if (Date.now() - this._tfLastRxMs <= this._tfTimeoutMs) return
-    this._clearTFData()
+    if (!this._tfDynamicLastRxMs) return
+    if (Date.now() - this._tfDynamicLastRxMs <= this._tfTimeoutMs) return
+
+    this._dynamicTF.clear()
+    this.tfTree = new Map(this._staticTF)
+    this.allFrames = new Set()
+    this.tfTree.forEach((entry, child) => {
+      this.allFrames.add(child)
+      this.allFrames.add(entry.parentFrame)
+    })
+
+    try {
+      const tfMgr = getTfManager()
+      tfMgr.clearDynamic?.()
+    } catch (_) {}
+
+    this._tfDynamicLastRxMs = 0
+    this._emit('tf', { tree: this.tfTree, frames: this.getFrames() })
   }
 
   _sendSubscribe(topic) {
@@ -474,7 +489,7 @@ export class RosDataManager extends EventTarget {
   _processTF(topic, tfMsg) {
     const isStatic = topic === '/tf_static'
     const transforms = tfMsg?.transforms || []
-    if (transforms.length) this._tfLastRxMs = Date.now()
+    if (!isStatic && transforms.length) this._tfDynamicLastRxMs = Date.now()
     transforms.forEach(tf => {
       const child  = tf.child_frame_id
       const parent = tf.header?.frame_id || 'world'

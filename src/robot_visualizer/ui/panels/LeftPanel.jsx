@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useSimStore } from '../store/simStore'
 import { useMapStore } from '../store/mapStore'
 import { useRos } from '../hooks/useRos'
@@ -6,6 +6,8 @@ import { getTfManager } from '../../data/TfManager'
 import { SceneCommandBus } from '../../manager/SceneCommandBus'
 import { getDisplayManager } from '../../manager/DisplayManager'
 import { getTfDisplayManager } from '../../manager/TfDisplayManager'
+import { getImportedAssetStore, importLocalAssetFile, updateImportedAssetParams, setImportedAssetChecked } from '../../scene/importers'
+import { IMPORTED_ASSET_TYPE, createImportedAssetDisplay, renderImportedAssetParams } from './imported_asset'
 import './LeftPanel.css'
 
 const DISPLAY_SCHEMA_FILTER = {
@@ -107,7 +109,7 @@ function PColor({ label, defaultHex='#ffffff', indent=0, onChange }) {
 
 // ── TopicSelect: combobox with type-filtered dropdown ─────────────────────
 function TopicSelect({ value, onChange, liveTopics, allowedDisplayType }) {
-  const topics = (() => {
+  const topics = useMemo(() => {
     if (!liveTopics || liveTopics.length === 0) return []
 
     if (allowedDisplayType && DISPLAY_SCHEMA_FILTER[allowedDisplayType]) {
@@ -118,35 +120,64 @@ function TopicSelect({ value, onChange, liveTopics, allowedDisplayType }) {
     }
 
     return liveTopics.map(c => c.topic)
-  })()
+  }, [liveTopics, allowedDisplayType])
 
-  const [input,    setInput]    = useState(value||'')
-  const [open,     setOpen]     = useState(false)
+  const [input, setInput] = useState(value || '')
+  const [open, setOpen] = useState(false)
   const [filtered, setFiltered] = useState(topics)
   const wrapRef = useRef(null)
-  const warn = input.length>0 && !topics.includes(input)
+  const warn = input.length > 0 && !topics.includes(input)
 
   useEffect(() => {
-    const q = input.toLowerCase()
-    setFiltered(q ? topics.filter(t=>t.toLowerCase().includes(q)) : topics)
-  }, [input, topics.join(',')])
+    setInput(prev => prev === (value || '') ? prev : (value || ''))
+  }, [value])
 
   useEffect(() => {
-    const h = (e) => { if (wrapRef.current&&!wrapRef.current.contains(e.target)) setOpen(false) }
+    setFiltered(prev => {
+      if (prev.length === topics.length && prev.every((item, idx) => item === topics[idx])) return prev
+      return topics
+    })
+  }, [topics])
+
+  useEffect(() => {
+    const h = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false) }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [])
 
-  const select = (t) => { setInput(t); onChange&&onChange(t); setOpen(false) }
+  const select = (t) => {
+    setInput(t)
+    setFiltered(topics)
+    onChange && onChange(t)
+    setOpen(false)
+  }
+
+  const handleInputChange = (next) => {
+    setInput(next)
+    setOpen(true)
+    const q = next.trim().toLowerCase()
+    if (!q) {
+      setFiltered(topics)
+    } else {
+      const matches = topics.filter(t => t.toLowerCase().includes(q))
+      setFiltered(matches.length > 0 ? matches : topics)
+    }
+    onChange && onChange(next)
+  }
+
+  const handleOpen = () => {
+    setOpen(true)
+    setFiltered(topics)
+  }
 
   return (
     <div className="p-topic-wrap" ref={wrapRef}>
       <div className={`p-topic-row ${warn?'warn':''}`}>
         <input className="p-topic-input" value={input} placeholder="/topic"
-          onChange={e=>{setInput(e.target.value);setOpen(true);onChange&&onChange(e.target.value)}}
-          onFocus={()=>setOpen(true)}/>
+          onChange={e => handleInputChange(e.target.value)}
+          onFocus={handleOpen}/>
         {warn && <span className="p-topic-warn" title="未找到该 Topic">⚠</span>}
-        <button className="p-topic-arrow" onClick={()=>setOpen(v=>!v)} tabIndex={-1}>▾</button>
+        <button className="p-topic-arrow" onClick={handleOpen} tabIndex={-1}>▾</button>
       </div>
       {open && (
         <div className="p-topic-dropdown">
@@ -164,7 +195,7 @@ function TopicSelect({ value, onChange, liveTopics, allowedDisplayType }) {
 // ════════════════════════════════════════════════════════════════════════
 const TYPE_ICONS = {
   grid:'⊞', robotmodel:'🤖', path:'〰️', map:'🗺️', tf:'📐',
-  pointcloud:'⛅', laserscan:'📡', marker:'📍', axes:'🔀', image:'🖼️',
+  pointcloud:'⛅', laserscan:'📡', marker:'📍', axes:'🔀', image:'🖼️', importedasset:'📦',
   global:'⚙️', default:'📦',
 }
 
@@ -201,8 +232,8 @@ const DISPLAY_TYPES = [
   { id:'pointcloud', icon:'⛅', label:'PointCloud2',  color:'#b0bec5', status:'warn', desc:'Point cloud data' },
   { id:'laserscan',  icon:'📡', label:'LaserScan',    color:'#ef5350', status:'warn', desc:'Laser scan data' },
   { id:'marker',     icon:'📍', label:'Marker',       color:'#ff9f0a', status:'ok',   desc:'Visualization markers' },
-  { id:'axes',       icon:'🔀', label:'Axes',         color:'#ef5350', status:'ok',   desc:'XYZ axes display' },
   { id:'image',      icon:'🖼️', label:'Image',        color:'#af52de', status:'warn', desc:'Camera image stream' },
+  IMPORTED_ASSET_TYPE,
 ]
 
 const TOPIC_TYPE_MAP = {
@@ -343,26 +374,39 @@ function TfFrameItem({ node, hidden, onToggle, indent=0 }) {
 }
 
 function TfFrameTree() {
+  const tfDisp = getTfDisplayManager()
   const [roots,    setRoots]    = useState([])
-  const [hidden,   setHidden]   = useState(new Set())
+  const [hidden,   setHidden]   = useState(() => new Set(tfDisp.hiddenFrames))
   const [selected, setSelected] = useState(null)
-  const [settings, setSettings] = useState({
-    showNames:true, showAxes:true, showArrows:true,
-    markerScale:1, allEnabled:true,
-  })
+  const [settings, setSettings] = useState(() => ({ ...tfDisp.settings }))
   const set = (k,v) => {
     const next = { ...settings, [k]: v }
     setSettings(next)
+
+    if (k === 'allEnabled') {
+      const allFrameNames = bfsOrder(roots).filter(Boolean)
+      const nextHidden = v ? new Set() : new Set(allFrameNames)
+      setHidden(nextHidden)
+      allFrameNames.forEach(name => tfDisp.setFrameVisible(name, v))
+      tfDisp.updateSettings({ allEnabled: v })
+      return
+    }
+
     // 通知 TfDisplayManager 设置变化
     if (k === 'markerScale') {
-      getTfDisplayManager()._rebuildScale(v)
+      tfDisp._rebuildScale(v)
     } else {
-      getTfDisplayManager().updateSettings({ [k]: v })
+      tfDisp.updateSettings({ [k]: v })
     }
   }
   const toggleVis = (name, vis) => {
-    setHidden(prev =>{const n=new Set(prev);vis?n.delete(name):n.add(name);return n})
-    getTfDisplayManager().setFrameVisible(name, vis)
+    setHidden(prev => {
+      const n = new Set(prev)
+      if (vis) n.delete(name)
+      else n.add(name)
+      return n
+    })
+    tfDisp.setFrameVisible(name, vis)
   }
 
   const [_localFF, setLocalFixedFrame] = useState('')
@@ -407,6 +451,8 @@ function TfFrameTree() {
       })
 
       setRoots(buildTfTreeNodes(displayTree))
+      setHidden(new Set(tfDisp.hiddenFrames))
+      setSettings({ ...tfDisp.settings })
     }
 
     mgr.on('update', rebuild)
@@ -484,6 +530,7 @@ function AddModal({ onAdd, onClose, liveChannels }) {
             <div key={d.id} className="modal-item" onClick={()=>{onAdd(d);onClose()}}><span className="modal-icon">{d.icon}</span><div><div className="modal-name">{d.label}</div><div className="modal-desc">{d.desc}</div></div></div>
           ))}
           {tab==='topic' && topics
+            .filter(ch => ch.topic !== '/tf' && ch.topic !== '/tf_static')
             .map(ch => {
               const tid = TOPIC_TYPE_MAP[ch.schemaName]
               if (!tid) return null
@@ -517,12 +564,25 @@ const DEFAULT_DISPLAYS = [
   { uid:'path-1',    id:'path',       label:'Path',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'〰' },
 ]
 
-export default function LeftPanel({ visible: visibleProp, onVisibleChange, onImageAdd, onImageRemove, onImageTopicChange }) {
+const createLayoutImageDisplay = (displayUid) => ({
+  uid: displayUid,
+  id: 'image',
+  label: 'Image',
+  color: '#af52de',
+  status: 'warn',
+  checked: true,
+  icon: '🖼️',
+  params: { topic: '/camera/image_raw' },
+})
+
+export default function LeftPanel({ visible: visibleProp, onVisibleChange, onImageAdd, onImageRemove = () => {}, onImageTopicChange, onImageVisibleChange, closedImageUid, onClosedImageUidHandled = () => {}, layoutImageDisplays = [] }) {
   const [_vis, _setVis]       = useState(true)
   const visible    = visibleProp!==undefined ? visibleProp : _vis
   const setVisible = (v) => { _setVis(v); onVisibleChange&&onVisibleChange(v) }
   const [showModal,   setShowModal]   = useState(false)
   const [displays,    setDisplays]    = useState(DEFAULT_DISPLAYS)
+  const fileInputRef = useRef(null)
+  const pendingImportUidRef = useRef(null)
   const [selectedUid, setSelectedUid] = useState(null)
   const [fixedFrame,  setFixedFrame]  = useState('')
   const [renaming,    setRenaming]    = useState(false)
@@ -606,6 +666,23 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     dm._ensureSubscribed(nextTopic, robotDisp.uid)
   }, [liveChannels, displays])
 
+  useEffect(() => {
+    const layoutImageUids = new Set(layoutImageDisplays.map(item => item.displayUid))
+    setDisplays(prev => {
+      const next = prev.filter(d => !(d.id === 'image' && String(d.uid).startsWith('layout-image-') && !layoutImageUids.has(d.uid)))
+      let changed = next.length !== prev.length
+      const byUid = new Map(next.map(d => [d.uid, d]))
+
+      layoutImageDisplays.forEach(({ displayUid }) => {
+        if (byUid.has(displayUid)) return
+        byUid.set(displayUid, createLayoutImageDisplay(displayUid))
+        changed = true
+      })
+
+      return changed ? Array.from(byUid.values()) : prev
+    })
+  }, [layoutImageDisplays])
+
   const resetScene    = useSimStore(s => s.resetScene)
   const mapOpacity    = useMapStore(s => s.mapOpacity)
   const setMapOpacity = useMapStore(s => s.setMapOpacity)
@@ -619,16 +696,72 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
 
   const handleReset = useCallback(() => {
     resetScene()
-    // 通知 3D 场景彻底清理资源并复位相机
+    // 通知 3D 场景清理资源，但保持当前 view mode
     SceneCommandBus.dispatch({ type: 'scene:reset' })
   }, [resetScene])
 
+  useEffect(() => {
+    if (!closedImageUid) return
+    setDisplays(prev => prev.filter(d => !(d.id === 'image' && d.uid === closedImageUid)))
+    onImageRemove?.(closedImageUid)
+    onClosedImageUidHandled?.()
+  }, [closedImageUid, onImageRemove, onClosedImageUidHandled])
+
+  useEffect(() => {
+    const store = getImportedAssetStore()
+    const syncImportedAssets = (assets) => {
+      setDisplays(prev => {
+        const importedUids = new Set(assets.map(asset => asset.uid))
+        const preserved = prev.filter(d => d.id !== 'importedasset' || importedUids.has(d.uid))
+        const byUid = new Map(preserved.map(d => [d.uid, d]))
+
+        assets.forEach((asset) => {
+          const existing = byUid.get(asset.uid)
+          if (existing) {
+            byUid.set(asset.uid, {
+              ...existing,
+              checked: asset.checked ?? existing.checked ?? true,
+              label: asset.name || existing.label,
+              params: {
+                ...existing.params,
+                fileName: asset.fileName || existing.params?.fileName,
+                assetType: asset.assetType || existing.params?.assetType,
+                embeddedColor: !!asset.embeddedColor,
+                isPointCloud: !!asset.isPointCloud,
+                pointCount: asset.pointCount ?? existing.params?.pointCount,
+                showAxes: asset.params?.showAxes ?? existing.params?.showAxes ?? true,
+                color: asset.embeddedColor ? '#d7f0ff' : (existing.params?.color || '#d7f0ff'),
+                colorMode: asset.embeddedColor ? 'embedded' : 'solid',
+              },
+            })
+          } else {
+            byUid.set(asset.uid, createImportedAssetDisplay(asset))
+          }
+        })
+
+        return Array.from(byUid.values())
+      })
+    }
+
+    syncImportedAssets(store.getAssets())
+    return store.onChange(syncImportedAssets)
+  }, [])
+
   const handleAdd    = useCallback((dt) => {
     const uid = `${dt.id}-${Date.now()}`
-    const initTopic = dt.topicOverride || (dt.id === 'image' ? '/camera/image_raw' : '')
+    const initTopic = dt.topicOverride || ''
     const initParams = initTopic ? { topic: initTopic } : {}
-    const newDisp = {uid,...dt,checked:true,params:initParams}
+    const newDisp = dt.id === 'importedasset'
+      ? createImportedAssetDisplay({ uid })
+      : {uid,...dt,checked:true,params:initParams}
     setDisplays(prev => [...prev, newDisp])
+
+    if (dt.id === 'importedasset') {
+      pendingImportUidRef.current = uid
+      setSelectedUid(uid)
+      setTimeout(() => fileInputRef.current?.click(), 0)
+      return
+    }
 
     // 1. 通知 DisplayManager 新增 display
     getDisplayManager().addDisplay(newDisp)
@@ -647,13 +780,58 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
       onImageTopicChange?.(uid, initTopic)
     }
   }, [onImageAdd, onImageTopicChange, rosMgr, setMapEnabled])
+  const handleImportedAssetFilePick = useCallback(async (uid, file) => {
+    if (!uid || !file) return
+
+    try {
+      const existing = displays.find(d => d.uid === uid)
+      const visible = existing?.checked ?? true
+      const result = await importLocalAssetFile(file, uid, {
+        visible,
+        params: existing?.params,
+      })
+      if (!result) return
+      setDisplays(prev => prev.map(d => d.uid === uid
+        ? {
+            ...d,
+            checked: visible,
+            label: result.object?.name || file.name,
+            pendingFile: false,
+            params: {
+              ...d.params,
+              fileName: result.object?.userData?.importedAsset?.fileName || file.name,
+              assetType: result.object?.userData?.importedAsset?.assetType || (file.name.toLowerCase().endsWith('.pcd') ? 'pcd' : 'ply'),
+              embeddedColor: !!result.object?.userData?.importedAsset?.embeddedColor,
+              isPointCloud: !!result.object?.userData?.importedAsset?.isPointCloud,
+              pointCount: result.object?.userData?.importedAsset?.pointCount ?? d.params?.pointCount,
+              showAxes: d.params?.showAxes ?? true,
+              color: result.object?.userData?.importedAsset?.embeddedColor ? '#d7f0ff' : (d.params?.color || '#d7f0ff'),
+              colorMode: result.object?.userData?.importedAsset?.embeddedColor ? 'embedded' : 'solid',
+            },
+          }
+        : d
+      ))
+    } catch (error) {
+      console.error('[LeftPanel] failed to import local asset:', error)
+      setDisplays(prev => prev.filter(d => d.uid !== uid))
+    }
+  }, [])
+
   const handleDelete = useCallback(() => {
     if (!selectedUid) return
     const d = displays.find(x => x.uid === selectedUid)
     if (d&&d.noDel) return
 
-    // 1. Notify Manager to cleanup topics and markers
-    getDisplayManager().removeDisplay(selectedUid)
+    if (d?.id === 'importedasset') {
+      if (d.pendingFile) {
+        setDisplays(prev => prev.filter(item => item.uid !== selectedUid))
+      } else {
+        SceneCommandBus.dispatch({ type: 'scene:importedasset:remove', uid: selectedUid })
+      }
+    } else {
+      // 1. Notify Manager to cleanup topics and markers
+      getDisplayManager().removeDisplay(selectedUid)
+    }
 
     // 2. Update UI state + aggregate global toggles by remaining checked displays
     if (d.id === 'image') onImageRemove?.(d.uid)
@@ -686,8 +864,17 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     const disp = displays.find(d => d.uid === uid)
     if (!disp) return
 
-    // 通知 DisplayManager 勾选状态变化
-    getDisplayManager().toggleDisplay(uid, val)
+    if (disp.id === 'image') {
+      onImageVisibleChange?.(uid, val)
+    }
+
+    if (disp.id === 'importedasset') {
+      setImportedAssetChecked(uid, val)
+      SceneCommandBus.dispatch({ type: 'scene:importedasset:visible', uid, visible: val })
+    } else {
+      // 通知 DisplayManager 勾选状态变化
+      getDisplayManager().toggleDisplay(uid, val)
+    }
 
     // TF/Map 为全局单例显示，按同类“至少一个勾选”聚合启用状态
     const tfEnabled = nextDisplays.some(item => item.id === 'tf' && item.checked)
@@ -695,9 +882,28 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     getTfDisplayManager().setEnabled(tfEnabled)
     rosMgr?.setAutoSubscribeTF?.(tfEnabled)
     setMapEnabled(mapEnabledNext)
-  }, [displays, rosMgr, setMapEnabled])
+  }, [displays, rosMgr, setMapEnabled, onImageVisibleChange])
 
   const renderParams = (d) => {
+    if (d.id === 'importedasset') {
+      return renderImportedAssetParams({
+        d,
+        PR,
+        PNum,
+        PSelect,
+        PColor,
+        onPickFile: () => {
+          pendingImportUidRef.current = d.uid
+          fileInputRef.current?.click()
+        },
+        onParamChange: (key, value) => {
+          setDisplays(prev => prev.map(x => x.uid === d.uid ? { ...x, params: { ...x.params, [key]: value } } : x))
+          const nextParams = { ...(d.params || {}), [key]: value }
+          updateImportedAssetParams(d.uid, { [key]: value })
+          SceneCommandBus.dispatch({ type: 'scene:importedasset:update', uid: d.uid, params: nextParams })
+        },
+      })
+    }
     if (d.id==='global') return (
       <>
         <PR label="Fixed Frame" indent={1}><PSelect value={fixedFrame} onChange={e=>handleFixedFrameChange(e.target.value)}>
@@ -770,7 +976,7 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
       <>
         <PR label="Topic" indent={1}>
           <TopicSelect
-            value={d.params?.topic || '/camera/image_raw'}
+            value={d.params?.topic || ''}
             liveTopics={liveChannels}
             allowedDisplayType="image"
             onChange={v => {
@@ -780,7 +986,6 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
             }}
           />
         </PR>
-        <PR label="Transport" indent={1}><PSelect><option>raw</option><option>compressed</option></PSelect></PR>
       </>
     )
     if (d.id==='marker') return <PR label="Topic" indent={1}><TopicSelect value="/visualization_marker" liveTopics={liveChannels} allowedDisplayType="marker"/></PR>
@@ -789,6 +994,20 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
 
   return (
     <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pcd,.ply"
+        style={{ display: 'none' }}
+        onChange={async (e) => {
+          const file = e.target.files?.[0]
+          const uid = pendingImportUidRef.current
+          pendingImportUidRef.current = null
+          e.target.value = ''
+          if (!file || !uid) return
+          await handleImportedAssetFilePick(uid, file)
+        }}
+      />
       <button className={`lp-show ${visible?'hidden':''}`} onClick={()=>setVisible(true)}>▶</button>
       <div className={`left-panel ${visible?'open':'closed'}`}>
         <div className="lp-hdr">
