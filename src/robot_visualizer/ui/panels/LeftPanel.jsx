@@ -667,22 +667,53 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     dm._ensureSubscribed(nextTopic, robotDisp.uid)
   }, [liveChannels, displays])
 
+  // layout 切换时同步 displays：
+  // - 有 image 面板时补全 display 条目
+  // - 没有 image 面板时清理所有 layout-image-* display
+  // 用 ref 追踪 prev，避免 effect 循环依赖
+  const prevLayoutImagesRef = useRef(layoutImageDisplays)
   useEffect(() => {
-    const layoutImageUids = new Set(layoutImageDisplays.map(item => item.displayUid))
-    setDisplays(prev => {
-      const next = prev.filter(d => !(d.id === 'image' && String(d.uid).startsWith('layout-image-') && !layoutImageUids.has(d.uid)))
-      let changed = next.length !== prev.length
-      const byUid = new Map(next.map(d => [d.uid, d]))
+    const prevUids = new Set(prevLayoutImagesRef.current.map(item => item.displayUid))
+    const currUids = new Set(layoutImageDisplays.map(item => item.displayUid))
+    const addedUids   = [...currUids].filter(uid => !prevUids.has(uid))
+    const removedUids = [...prevUids].filter(uid => !currUids.has(uid))
 
-      layoutImageDisplays.forEach(({ displayUid }) => {
-        if (byUid.has(displayUid)) return
-        byUid.set(displayUid, createLayoutImageDisplay(displayUid))
-        changed = true
+    if (addedUids.length === 0 && removedUids.length === 0) {
+      prevLayoutImagesRef.current = layoutImageDisplays
+      return
+    }
+
+    // 清理：通知 DisplayManager
+    removedUids.forEach(uid => getDisplayManager().removeDisplay(uid))
+
+    setDisplays(prev => {
+      const byUid = new Map(prev.map(d => [d.uid, d]))
+      let changed = false
+
+      removedUids.forEach(uid => {
+        if (byUid.has(uid)) { byUid.delete(uid); changed = true }
       })
 
-      return changed ? Array.from(byUid.values()) : prev
+      addedUids.forEach(uid => {
+        if (!byUid.has(uid)) { byUid.set(uid, createLayoutImageDisplay(uid)); changed = true }
+      })
+
+      if (!changed) {
+        prevLayoutImagesRef.current = layoutImageDisplays
+        return prev
+      }
+
+      prevLayoutImagesRef.current = layoutImageDisplays
+      return Array.from(byUid.values())
     })
   }, [layoutImageDisplays])
+
+  // 选中项悬空时自动切换到列表第一个（放在单独的 effect 里，避免在 setDisplays updater 里调用 setState）
+  useEffect(() => {
+    if (selectedUid && !displays.some(d => d.uid === selectedUid)) {
+      setSelectedUid(displays.length > 0 ? displays[0].uid : null)
+    }
+  }, [displays, selectedUid])
 
   const resetScene    = useSimStore(s => s.resetScene)
   const mapOpacity    = useMapStore(s => s.mapOpacity)

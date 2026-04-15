@@ -6,6 +6,7 @@ import TopNav from './ui/panels/TopNav'
 import LeftPanel from './ui/panels/LeftPanel'
 import Viewport3D from './scene/Viewport3D'
 import ImagePanel from './ui/components/ImagePanel'
+import LogPanel from './ui/components/LogPanel'
 import VirtualJoystick from './ui/components/VirtualJoystick'
 import { getTfDisplayManager } from './manager/TfDisplayManager'
 import { PanelLayout } from './ui/layout/PanelLayout'
@@ -109,9 +110,8 @@ const normalizeLayoutImages = (node, imageTopics, nextTopics = imageTopics, chan
 
   if (node.kind === 'leaf') {
     if (node.ptype !== 'image') return { node, imageTopics: nextTopics, changed }
-    const panelId = node.panelId || `panel-${Date.now()}`
-    const displayUid = node.displayUid || `layout-image-${panelId}`
 
+    const displayUid = node.displayUid || `layout-image-${node.panelId || 'new'}`
     let topicMap = nextTopics
     let topicChanged = changed
     if (!(displayUid in topicMap)) {
@@ -119,15 +119,9 @@ const normalizeLayoutImages = (node, imageTopics, nextTopics = imageTopics, chan
       topicChanged = true
     }
 
-    if (node.panelId === panelId && node.displayUid === displayUid) {
-      return { node, imageTopics: topicMap, changed: topicChanged }
-    }
+    const newNode = node.displayUid === displayUid ? node : { ...node, displayUid }
 
-    return {
-      node: { ...node, panelId, displayUid },
-      imageTopics: topicMap,
-      changed: true,
-    }
+    return { node: newNode, imageTopics: topicMap, changed: topicChanged }
   }
 
   const left = normalizeLayoutImages(node.a, imageTopics, nextTopics, changed)
@@ -137,11 +131,14 @@ const normalizeLayoutImages = (node, imageTopics, nextTopics = imageTopics, chan
     return { node, imageTopics: right.imageTopics, changed: false }
   }
 
-  return {
-    node: { ...node, a: left.node, b: right.node },
-    imageTopics: right.imageTopics,
-    changed: true,
-  }
+  // 只有子节点真正变了才创建新 split 节点（避免引用变化触发无限 setLayout）
+  const newA = left.node !== node.a ? left.node : node.a
+  const newB = right.node !== node.b ? right.node : node.b
+  const newNode = (left.node !== node.a || right.node !== node.b)
+    ? { ...node, a: newA, b: newB }
+    : node
+
+  return { node: newNode, imageTopics: right.imageTopics, changed: right.changed || left.changed }
 }
 
 const collectLayoutImageDisplays = (node, acc = []) => {
@@ -257,6 +254,9 @@ export default function RobotVisualizer({ onBack }) {
     if (ptype === 'image') {
       const topic = panelNode?.displayUid ? (imageTopics[panelNode.displayUid] || '') : ''
       return <ImagePanel topic={topic || '/camera/image_raw'} />
+    }
+    if (ptype === 'log') {
+      return <LogPanel />
     }
     return (
       <div className="pcell-placeholder">
