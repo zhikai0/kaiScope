@@ -16,6 +16,7 @@
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "three": "^0.177.0",
+    "uplot": "^1.6.31",
     "urdf-loader": "^0.12.6",
     "vite-plugin-cesium": "^1.2.23",
     "zustand": "^5.0.5"

@@ -10,6 +10,19 @@
 - 机器人 URDF 
 
 
+## node js 安装
+```bash
+bash install.sh
+# 代替重启 shell
+. "$HOME/.nvm/nvm.sh"
+# 下载并安装 Node.js：
+nvm install 22
+node -v
+
+npm install -g pnpm
+# 验证
+pnpm run dev
+```
 ## Quick start
 ```bash
 # install
