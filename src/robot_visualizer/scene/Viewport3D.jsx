@@ -14,26 +14,35 @@ import { getRosDataManager } from '../data/getRosDataManager'
 import { getTfDisplayManager } from '../manager/TfDisplayManager'
 import './Viewport3D.css'
 
-let PERSISTED_VIEWPORT_STATE = new Map()
+const VIEWPORT_KEY_PREFIX = 'kaiscope-viewport-'
 
-const getPersistedViewportState = (panelId) => {
-  if (!PERSISTED_VIEWPORT_STATE.has(panelId)) {
-    PERSISTED_VIEWPORT_STATE.set(panelId, {
-      cameraPos: null,
-      cameraTarget: null,
-      viewMode: 'orbit',
-      at: 0,
-    })
-  }
-  return PERSISTED_VIEWPORT_STATE.get(panelId)
+const DEFAULT_VIEWPORT_STATE = {
+  cameraPos: null,
+  cameraTarget: null,
+  viewMode: 'orbit',
+  at: 0,
+}
+
+function loadViewportState(panelId) {
+  try {
+    const raw = localStorage.getItem(VIEWPORT_KEY_PREFIX + panelId)
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return { ...DEFAULT_VIEWPORT_STATE }
+}
+
+function saveViewportState(panelId, state) {
+  try {
+    localStorage.setItem(VIEWPORT_KEY_PREFIX + panelId, JSON.stringify(state))
+  } catch {}
 }
 
 export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, onGoalPoseComplete }) {
   const wrapRef = useRef(null)
   const mountRef = useRef(null)
   const refs     = useRef({})
-  const persistedState = getPersistedViewportState(panelId)
-  const [viewMode, setViewMode] = useState(persistedState.viewMode || 'orbit')
+  const persistedState = useRef(loadViewportState(panelId))
+  const [viewMode, setViewMode] = useState(persistedState.current.viewMode || 'orbit')
 
   const trajectory    = useSimStore(s => s.trajectory)
   const historyPath   = useSimStore(s => s.historyPath)
@@ -80,10 +89,10 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
     controls.panSpeed = 0.7
 
     const now = Date.now()
-    const persistedFresh = now - persistedState.at < 10_000
-    if (persistedFresh && persistedState.cameraPos && persistedState.cameraTarget) {
-      camera.position.copy(persistedState.cameraPos)
-      controls.target.copy(persistedState.cameraTarget)
+    const persistedFresh = now - persistedState.current.at < 10_000
+    if (persistedFresh && persistedState.current.cameraPos && persistedState.current.cameraTarget) {
+      camera.position.copy(persistedState.current.cameraPos)
+      controls.target.copy(persistedState.current.cameraTarget)
       controls.update()
     }
 
@@ -649,10 +658,11 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
     setTimeout(() => SceneCommandBus.dispatch({ type: 'scene:ready' }), 0)
 
     return () => {
-      persistedState.cameraPos = refs.current.camera?.position?.clone?.() || null
-      persistedState.cameraTarget = refs.current.controls?.target?.clone?.() || null
-      persistedState.viewMode = refs.current._viewMode || viewMode
-      persistedState.at = Date.now()
+      persistedState.current.cameraPos = refs.current.camera?.position?.clone?.() || null
+      persistedState.current.cameraTarget = refs.current.controls?.target?.clone?.() || null
+      persistedState.current.viewMode = refs.current._viewMode || viewMode
+      persistedState.current.at = Date.now()
+      saveViewportState(panelId, persistedState.current)
       unsubscribeImportedAssets()
       if (animId) cancelAnimationFrame(animId)
       ro.disconnect()
@@ -688,8 +698,9 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
 
   // ── Camera view mode ───────────────────────────────────────────────
   useEffect(() => {
-    persistedState.viewMode = viewMode
-  }, [persistedState, viewMode])
+    persistedState.current.viewMode = viewMode
+    saveViewportState(panelId, persistedState.current)
+  }, [persistedState, viewMode, panelId])
 
   useEffect(() => {
     const { cameraViews } = refs.current

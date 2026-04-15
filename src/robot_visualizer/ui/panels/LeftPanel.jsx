@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useSimStore } from '../store/simStore'
 import { useMapStore } from '../store/mapStore'
 import { useRos } from '../hooks/useRos'
+import { useLocalPersist } from '../hooks/useLocalPersist'
 import { getTfManager } from '../../data/TfManager'
 import { SceneCommandBus } from '../../manager/SceneCommandBus'
 import { getDisplayManager } from '../../manager/DisplayManager'
@@ -580,7 +581,7 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   const visible    = visibleProp!==undefined ? visibleProp : _vis
   const setVisible = (v) => { _setVis(v); onVisibleChange&&onVisibleChange(v) }
   const [showModal,   setShowModal]   = useState(false)
-  const [displays,    setDisplays]    = useState(DEFAULT_DISPLAYS)
+  const [displays,    setDisplays]    = useLocalPersist('kaiscope-displays', DEFAULT_DISPLAYS)
   const fileInputRef = useRef(null)
   const pendingImportUidRef = useRef(null)
   const [selectedUid, setSelectedUid] = useState(null)

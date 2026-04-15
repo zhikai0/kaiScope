@@ -9,18 +9,46 @@
  *  目标速度 = 摇杆归一化值 × 最大速度
  *  实际速度以配置的加速度/减速度步进逼近目标值
  *  步进周期 = 1 / publishHz
+ *
+ * 持久化：控制参数会自动缓存到 localStorage，重启页面后自动恢复
  */
 import { getRosDataManager } from '../data/getRosDataManager'
 
+const CTRL_CONFIG_KEY = 'kaiscope-ctrl-config'
+
+const DEFAULT_CONFIG = {
+  maxLinear:    3.0,
+  maxAngular:   0.5,
+  linearAccel:  1.0,
+  linearDecel:  1.0,
+  angularAccel: 0.5,
+  angularDecel: 0.5,
+}
+
+function loadConfig() {
+  try {
+    const raw = localStorage.getItem(CTRL_CONFIG_KEY)
+    if (raw) return { ...DEFAULT_CONFIG, ...JSON.parse(raw) }
+  } catch {}
+  return { ...DEFAULT_CONFIG }
+}
+
+function saveConfig(cfg) {
+  try {
+    localStorage.setItem(CTRL_CONFIG_KEY, JSON.stringify(cfg))
+  } catch {}
+}
+
 export class ControlManager {
   constructor() {
+    const cfg = loadConfig()
     // ── 可配置参数 ──────────────────────────────────────────
-    this.maxLinear      = 3.0    // m/s
-    this.maxAngular     = 0.5   // rad/s
-    this.linearAccel    = 1.0   // m/s²  (加速)
-    this.linearDecel    = 1.0   // m/s²  (减速/松杆)
-    this.angularAccel   = 0.5   // rad/s²
-    this.angularDecel   = 0.5   // rad/s²
+    this.maxLinear      = cfg.maxLinear
+    this.maxAngular     = cfg.maxAngular
+    this.linearAccel    = cfg.linearAccel
+    this.linearDecel    = cfg.linearDecel
+    this.angularAccel   = cfg.angularAccel
+    this.angularDecel  = cfg.angularDecel
     // ── 内部状态 ─────────────────────────────────────────────
     this._publishHz     = 20
     this._timer         = null
@@ -56,6 +84,9 @@ export class ControlManager {
       this.angularAccel = angularDecel
       this.angularDecel = angularDecel
     }
+
+    // 持久化到 localStorage
+    saveConfig(this.getConfig())
   }
 
   getConfig() {

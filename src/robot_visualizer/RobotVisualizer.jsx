@@ -10,6 +10,7 @@ import VirtualJoystick from './ui/components/VirtualJoystick'
 import { getTfDisplayManager } from './manager/TfDisplayManager'
 import { PanelLayout } from './ui/layout/PanelLayout'
 import { PANEL_TYPES } from './ui/layout/panelTypes'
+import { useLocalPersist } from './ui/hooks/useLocalPersist'
 import './RobotVisualizer.css'
 
 getTfDisplayManager()
@@ -155,13 +156,13 @@ const collectLayoutImageDisplays = (node, acc = []) => {
 }
 
 export default function RobotVisualizer({ onBack }) {
-  const [layout, setLayout] = useState({ kind: 'leaf', ptype: '3d' })
+  const [layout, setLayout] = useLocalPersist('kaiscope-layout', { kind: 'leaf', ptype: '3d' })
   const viewportPanelIdRef = useRef('main-3d')
-  const [imageTopics, setImageTopics] = useState({})
+  const [imageTopics, setImageTopics] = useLocalPersist('kaiscope-image-topics', {})
   const [closedImageUid, setClosedImageUid] = useState(null)
   const [displaysVisible, setDisplaysVisible] = useState(true)
-  const [controlMode, setControlMode] = useState(false)
-  const [goalPoseMode, setGoalPoseMode] = useState(false)
+  const [controlMode, setControlMode] = useLocalPersist('kaiscope-ctrl-mode', false)
+  const [goalPoseMode, setGoalPoseMode] = useLocalPersist('kaiscope-goal-pose', false)
   const [showJoystickConfig, setShowJoystickConfig] = useState(false)
 
   const handleToggleControl = () => {

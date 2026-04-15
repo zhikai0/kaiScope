@@ -5,6 +5,7 @@ import { fmtClock, nowSeconds } from './time'
 import { BusSessionManager } from './manager/BusSessionManager'
 import UPlotPanel from './ui/components/UPlotPanel'
 import { useDragResize } from './ui/layout/useDragResize'
+import { useLocalPersist } from '../robot_visualizer/ui/hooks/useLocalPersist'
 import './SerialDebug.css'
 
 const NAV = [
@@ -20,29 +21,29 @@ export default function SerialDebugApp({ onBack }) {
   const session = useMemo(() => new BusSessionManager(), [])
   const series = useMemo(() => new RingSeries(8000), [])
 
-  const [activeNav, setActiveNav] = useState('connect')
-  const [leftPanelW, setLeftPanelW] = useState(250)
-  const [bottomH, setBottomH] = useState(220)
+  const [activeNav, setActiveNav] = useLocalPersist('sdbg-nav', 'connect')
+  const [leftPanelW, setLeftPanelW] = useLocalPersist('sdbg-panel-w', 250)
+  const [bottomH, setBottomH] = useLocalPersist('sdbg-bottom-h', 220)
 
   const [wsStatus, setWsStatus] = useState('disconnected')
   const [uartOpen, setUartOpen] = useState(false)
   const [canOpen, setCanOpen] = useState(false)
-  const [uartCfg, setUartCfg] = useState(DEFAULT_UART)
-  const [canCfg, setCanCfg] = useState(DEFAULT_CAN)
+  const [uartCfg, setUartCfg] = useLocalPersist('sdbg-uart', DEFAULT_UART)
+  const [canCfg, setCanCfg] = useLocalPersist('sdbg-can', DEFAULT_CAN)
   const [uartPorts, setUartPorts] = useState([])
   const [canPorts, setCanPorts] = useState([])
   const [selectedBus, setSelectedBus] = useState('')
 
-  const [protocol, setProtocol] = useState('csv')
-  const [delimiter, setDelimiter] = useState(',')
-  const [enabledChannels, setEnabledChannels] = useState([])
+  const [protocol, setProtocol] = useLocalPersist('sdbg-protocol', 'csv')
+  const [delimiter, setDelimiter] = useLocalPersist('sdbg-delimiter', ',')
+  const [enabledChannels, setEnabledChannels] = useLocalPersist('sdbg-channels', [])
 
   const [txText, setTxText] = useState('')
 
   const [rxLog, setRxLog] = useState([])
   const [sysLog, setSysLog] = useState([])
-  const [widgets, setWidgets] = useState(['plot'])
-  const [testHz, setTestHz] = useState(20)
+  const [widgets, setWidgets] = useLocalPersist('sdbg-widgets', ['plot'])
+  const [testHz, setTestHz] = useLocalPersist('sdbg-test-hz', 20)
 
   const shellRef = useRef(null)
   const rightRef = useRef(null)

@@ -21,25 +21,59 @@ import { SceneCommandBus } from './SceneCommandBus'
 // ROS 消息类型：用 geometry_msgs/msg/Pose 表示绝对位姿（最简单，无 header）
 const AXES_ROS_TYPE = 'geometry_msgs/msg/Pose'
 
+const TF_DISP_KEY = 'kaiscope-tfdisp'
+
+const DEFAULT_TF_SETTINGS = {
+  showAxes:    true,
+  showNames:   true,
+  showArrows:  true,
+  markerScale: 1.0,
+  allEnabled:  true,
+}
+
+function loadTfDispState() {
+  try {
+    const raw = localStorage.getItem(TF_DISP_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      return {
+        settings:      { ...DEFAULT_TF_SETTINGS, ...(parsed.settings || {}) },
+        hiddenFrames: Array.isArray(parsed.hiddenFrames) ? parsed.hiddenFrames : [],
+        fixedFrame:   parsed.fixedFrame || '',
+        enabled:       parsed.enabled !== undefined ? parsed.enabled : true,
+      }
+    }
+  } catch {}
+  return null
+}
+
+function saveTfDispState(state) {
+  try {
+    localStorage.setItem(TF_DISP_KEY, JSON.stringify({
+      settings:      state.settings,
+      hiddenFrames:  Array.from(state.hiddenFrames || []),
+      fixedFrame:    state.fixedFrame,
+      enabled:       state.enabled,
+    }))
+  } catch {}
+}
+
 export class TfDisplayManager {
   constructor() {
+    const saved = loadTfDispState()
     /** @type {string} 固定坐标系，默认取 TF 树根帧 */
-    this.fixedFrame = ''
+    this.fixedFrame = saved?.fixedFrame ?? ''
 
     /** @type {{ showAxes, showNames, showArrows, markerScale, allEnabled }} */
-    this.settings = {
-      showAxes:    true,
-      showNames:   true,
-      showArrows:  true,
-      markerScale: 1.0,
-      allEnabled:  true,
-    }
+    this.settings = saved?.settings ? { ...DEFAULT_TF_SETTINGS, ...saved.settings } : { ...DEFAULT_TF_SETTINGS }
 
     /** @type {Set<string>} 用户手动隐藏的 frame 名称 */
-    this.hiddenFrames = new Set()
+    this.hiddenFrames = new Set(
+      (saved?.hiddenFrames ?? []).filter(Boolean)
+    )
 
     /** @type {boolean} TF display 是否整体启用（DNode 勾选框） */
-    this.enabled = true
+    this.enabled = saved?.enabled ?? true
 
     /** @type {Set<string>} 当前场景中已创建的 axes marker key */
     this._activeKeys = new Set()
@@ -165,6 +199,7 @@ export class TfDisplayManager {
     this.fixedFrame = frame || this.fixedFrame
     this._emitFixedFrame(this.fixedFrame)
     this._sync()
+    this._save()
   }
 
   /**
@@ -177,6 +212,7 @@ export class TfDisplayManager {
       if (patch.allEnabled) this.hiddenFrames.clear()
     }
     this._sync()
+    this._save()
   }
 
   /**
@@ -194,6 +230,7 @@ export class TfDisplayManager {
     // 绕过节流，立即同步（用户主动操作，需要即时响应）
     this._lastSync = 0
     this._sync()
+    this._save()
   }
 
   /**
@@ -207,6 +244,7 @@ export class TfDisplayManager {
     } else {
       this._sync()
     }
+    this._save()
   }
 
   /**
@@ -220,6 +258,16 @@ export class TfDisplayManager {
   }
 
   // ── 内部逻辑 ────────────────────────────────────────────────────────
+
+  /** 将当前状态持久化到 localStorage */
+  _save() {
+    saveTfDispState({
+      settings:      this.settings,
+      hiddenFrames:  this.hiddenFrames,
+      fixedFrame:    this.fixedFrame,
+      enabled:       this.enabled,
+    })
+  }
 
   /**
    * 核心同步方法：从 TfManager 获取树，计算各 frame 绝对位姿，
@@ -379,6 +427,7 @@ export class TfDisplayManager {
     this._clearAll()
     this.settings.markerScale = scale
     this._sync()
+    this._save()
   }
 
   /** 清空场景中所有 TF marker（axes + arrows）*/

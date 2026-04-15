@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import RobotVisualizer from './robot_visualizer'
 import SerialDebugApp from './serial_debug'
+import { useLocalPersist } from './robot_visualizer/ui/hooks/useLocalPersist'
 import './MainApp.css'
 
 // SVG 图标组件
@@ -33,9 +34,9 @@ const MODULES = [
 ]
 
 export default function MainApp() {
-  const [selectedModule, setSelectedModule] = useState(null)
-  const [hasOpenedRobot, setHasOpenedRobot] = useState(false)
-  const [hasOpenedSerial, setHasOpenedSerial] = useState(false)
+  const [selectedModule, setSelectedModule] = useLocalPersist('kaiscope-module', null)
+  const [hasOpenedRobot, setHasOpenedRobot] = useLocalPersist('kaiscope-opened-robot', false)
+  const [hasOpenedSerial, setHasOpenedSerial] = useLocalPersist('kaiscope-opened-serial', false)
 
   return (
     <>
