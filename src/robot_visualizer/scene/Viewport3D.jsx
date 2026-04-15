@@ -450,8 +450,13 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
         if (id === 'grid')       { if (r.gridMaj) r.gridMaj.visible = visible }
         else if (id === 'path')  { if (r.trajGroup)  r.trajGroup.visible  = visible }
         else if (id === 'history'){ if (r.histGroup)  r.histGroup.visible  = visible }
-        else if (id === 'robotmodel' || id === 'tf') {
-          // robot model / tf: marker 可见性由 TfDisplayManager 管理
+        else if (id === 'robotmodel') {
+          r._urdfModels?.forEach(model => {
+            if (model._root) model._root.visible = visible
+          })
+        }
+        else if (id === 'tf') {
+          // tf: marker 可见性由 TfDisplayManager 管理
         }
         else if (id === 'axes')  {
           r.scene?.traverse(obj => { if (obj.isAxesHelper) obj.visible = visible })

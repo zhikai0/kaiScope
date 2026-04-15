@@ -154,7 +154,6 @@ const collectLayoutImageDisplays = (node, acc = []) => {
 
 export default function RobotVisualizer({ onBack }) {
   const [layout, setLayout] = useLocalPersist('kaiscope-layout', { kind: 'leaf', ptype: '3d' })
-  const viewportPanelIdRef = useRef('main-3d')
   const [imageTopics, setImageTopics] = useLocalPersist('kaiscope-image-topics', {})
   const [closedImageUid, setClosedImageUid] = useState(null)
   const [displaysVisible, setDisplaysVisible] = useState(true)
@@ -201,29 +200,32 @@ export default function RobotVisualizer({ onBack }) {
       const next = removeLeafByPanelId(prev, `image-${displayUid}`)
       return next || { kind: 'leaf', ptype: '3d' }
     })
+    // Delete 按钮删除标签
+    setClosedImageUid(displayUid)
   }, [])
 
   const setImageVisible = useCallback((displayUid, visible) => {
-    if (visible) {
-      setLayout(prev => {
+    // 勾选框控制：只改 layout 中 panel 的显隐，不修改 imageTopics（保留配置）
+    setLayout(prev => {
+      if (visible) {
         if (hasImagePanel(prev, displayUid)) return prev
         return appendImagePanel(prev, { kind: 'leaf', ptype: 'image', displayUid, panelId: `image-${displayUid}` })
-      })
-      return
-    }
-
-    setLayout(prev => {
-      const next = removeLeafByPanelId(prev, `image-${displayUid}`)
-      return next || { kind: 'leaf', ptype: '3d' }
+      } else {
+        // 隐藏：直接移除 panel，不设置 closedImageUid（不删除标签）
+        const next = removeLeafByPanelId(prev, `image-${displayUid}`)
+        return next || { kind: 'leaf', ptype: '3d' }
+      }
     })
   }, [])
 
   const handleImagePanelClose = useCallback((displayUid) => {
+    // 清理 topic，normalizeLayoutImages 会自动移除 panel
     setImageTopics(prev => {
       const next = { ...prev }
       delete next[displayUid]
       return next
     })
+    // 触发 closedImageUid effect 删除标签
     setClosedImageUid(displayUid)
   }, [])
 
@@ -247,9 +249,7 @@ export default function RobotVisualizer({ onBack }) {
 
   const renderPanel = (ptype, pt, panelNode, panelKey) => {
     if (ptype === '3d') {
-      const panelId = panelNode?.panelId || viewportPanelIdRef.current
-      if (!panelNode?.panelId) viewportPanelIdRef.current = panelId
-      return <Viewport3D key={panelKey || panelId} panelId={panelId} goalPoseMode={goalPoseMode} onGoalPoseComplete={() => setGoalPoseMode(false)} />
+      return <Viewport3D key={panelKey || 'main-3d'} panelId={panelKey || 'main-3d'} goalPoseMode={goalPoseMode} onGoalPoseComplete={() => setGoalPoseMode(false)} />
     }
     if (ptype === 'image') {
       const topic = panelNode?.displayUid ? (imageTopics[panelNode.displayUid] || '') : ''

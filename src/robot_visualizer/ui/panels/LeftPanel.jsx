@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from 'react'
 import { useSimStore } from '../store/simStore'
 import { useMapStore } from '../store/mapStore'
 import { useRos } from '../hooks/useRos'
@@ -604,6 +604,7 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   }, [])
   const [fps,         setFps]         = useState(60)
   const [tfFrames,    setTfFrames]    = useState([])
+  const removedByLayoutRef = useRef(new Set())  // 标记由 layout 关闭触发的删除，避免重复处理
 
   useEffect(() => {
     const mgr = getTfManager()
@@ -624,23 +625,69 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     rosMgr?.setAutoSubscribeTF?.(tfEnabled)
   }, [displays, rosMgr])
 
-  // 初始化 DisplayManager：连接数据层，注册默认 displays
+  // 初始化 & displays 变化时：同步所有 display 状态到 DisplayManager
+  // 确保状态驱动：勾选状态、topic 等变更都能自动同步
   useEffect(() => {
     const dm = getDisplayManager()
     if (rosMgr) dm.setDataManager(rosMgr)
-    // 注册 DEFAULT_DISPLAYS，并确保有 topic 的 display 都已订阅
-    DEFAULT_DISPLAYS.forEach(d => {
-      if (!dm._displays.has(d.uid)) {
-        dm.addDisplay({ ...d, params: d.topic ? { topic: d.topic } : {} })
-      } else {
-        // 已存在：补上 topic 字段并强制确保订阅
-        const existing = dm._displays.get(d.uid)
-        if (d.topic && !existing.topic) existing.topic = d.topic
-        const topic = existing.topic || d.topic
-        if (existing.checked && topic) dm._ensureSubscribed(topic, d.uid)
+
+    // 收集当前 DM 中存在的 uid
+    const dmUids = new Set(dm._displays.keys())
+    const panelUids = new Set(displays.map(d => d.uid))
+
+    // 1. 删除 DM 中有但面板已删除的 display
+    dmUids.forEach(uid => {
+      if (!panelUids.has(uid)) {
+        // robotmodel 删除时清理缓存
+        const disp = dm._displays.get(uid)
+        if (disp?.id === 'robotmodel') {
+          dm._lastRobotModel?.delete(uid)
+        }
+        dm.removeDisplay(uid)
       }
     })
-  }, [rosMgr])
+
+    // 2. 添加/更新面板中的 display
+    displays.forEach(disp => {
+      const existing = dm._displays.get(disp.uid)
+      if (!existing) {
+        // 新增：只对勾选且有 topic 的进行订阅（robotmodel 单独处理）
+        dm.addDisplay(disp)
+        // Map/TF 需要额外启用全局管理器
+        if (disp.id === 'map' && disp.checked) setMapEnabled(true)
+        if (disp.id === 'tf' && disp.checked) {
+          getTfDisplayManager().setEnabled(true)
+          rosMgr?.setAutoSubscribeTF?.(true)
+        }
+        // 新增也要同步 topic（可能在 params.topic 中）
+        const dispTopic = disp.topic || disp.params?.topic
+        if (dispTopic) {
+          dm.updateParam(disp.uid, 'topic', dispTopic)
+        }
+        return
+      }
+
+      // 已存在：同步 checked 状态
+      if (existing.checked !== disp.checked) {
+        dm.toggleDisplay(disp.uid, disp.checked)
+
+        // ── 特殊类型显示控制 ─────────────────────────────
+        if (disp.id === 'grid') {
+          SceneCommandBus.dispatch({ type: 'scene:grid:visible', visible: disp.checked })
+        } else if (disp.id === 'map') {
+          setMapEnabled(disp.checked)
+        }
+        // tf 的显示由 TfDisplayManager 控制（toggleDisplay 已处理）
+      }
+
+      // 同步 topic（disp.topic 或 disp.params.topic）
+      const dispTopic = disp.topic || disp.params?.topic
+      const existingTopic = existing.topic || existing.params?.topic
+      if (dispTopic && existingTopic !== dispTopic) {
+        dm.updateParam(disp.uid, 'topic', dispTopic)
+      }
+    })
+  }, [displays, rosMgr])
   // 自动绑定 RobotModel 话题：优先当前值；若默认值不存在则回退到首个可用 String topic
   useEffect(() => {
     const robotTopics = (liveChannels || [])
@@ -670,43 +717,42 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   // layout 切换时同步 displays：
   // - 有 image 面板时补全 display 条目
   // - 没有 image 面板时清理所有 layout-image-* display
-  // 用 ref 追踪 prev，避免 effect 循环依赖
-  const prevLayoutImagesRef = useRef(layoutImageDisplays)
+  // 同步 displays 到 DisplayManager（订阅/取消/加载/销毁）
+  // 注意：image panel 由 normalizeLayoutImages 根据 imageTopics 自动管理，此处不操作 layout
   useEffect(() => {
-    const prevUids = new Set(prevLayoutImagesRef.current.map(item => item.displayUid))
-    const currUids = new Set(layoutImageDisplays.map(item => item.displayUid))
-    const addedUids   = [...currUids].filter(uid => !prevUids.has(uid))
-    const removedUids = [...prevUids].filter(uid => !currUids.has(uid))
+    const dm = getDisplayManager()
+    if (rosMgr) dm.setDataManager(rosMgr)
 
-    if (addedUids.length === 0 && removedUids.length === 0) {
-      prevLayoutImagesRef.current = layoutImageDisplays
-      return
-    }
+    // 收集当前 DM 中存在的 uid
+    const dmUids = new Set(dm._displays.keys())
+    const panelUids = new Set(displays.map(d => d.uid))
 
-    // 清理：通知 DisplayManager
-    removedUids.forEach(uid => getDisplayManager().removeDisplay(uid))
-
-    setDisplays(prev => {
-      const byUid = new Map(prev.map(d => [d.uid, d]))
-      let changed = false
-
-      removedUids.forEach(uid => {
-        if (byUid.has(uid)) { byUid.delete(uid); changed = true }
-      })
-
-      addedUids.forEach(uid => {
-        if (!byUid.has(uid)) { byUid.set(uid, createLayoutImageDisplay(uid)); changed = true }
-      })
-
-      if (!changed) {
-        prevLayoutImagesRef.current = layoutImageDisplays
-        return prev
+    // 1. 删除 DM 中有但面板已删除的 display
+    dmUids.forEach(uid => {
+      if (!panelUids.has(uid)) {
+        const disp = dm._displays.get(uid)
+        if (disp?.id === 'robotmodel') {
+          dm._lastRobotModel?.delete(uid)
+        }
+        dm.removeDisplay(uid)
       }
-
-      prevLayoutImagesRef.current = layoutImageDisplays
-      return Array.from(byUid.values())
     })
-  }, [layoutImageDisplays])
+
+    // 2. 添加/更新面板中的 display
+    displays.forEach(disp => {
+      const existing = dm._displays.get(disp.uid)
+      if (!existing) {
+        dm.addDisplay(disp)
+        return
+      }
+      if (existing.checked !== disp.checked) {
+        dm.toggleDisplay(disp.uid, disp.checked)
+      }
+      if (disp.topic && existing.topic !== disp.topic) {
+        dm.updateParam(disp.uid, 'topic', disp.topic)
+      }
+    })
+  }, [displays, rosMgr])
 
   // 选中项悬空时自动切换到列表第一个（放在单独的 effect 里，避免在 setDisplays updater 里调用 setState）
   useEffect(() => {
@@ -734,7 +780,11 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
 
   useEffect(() => {
     if (!closedImageUid) return
-    setDisplays(prev => prev.filter(d => !(d.id === 'image' && d.uid === closedImageUid)))
+    // 只有 layout-image-* uid 才删除标签（panel close 触发的）
+    // 其他 image uid（如勾选变化触发的）不受影响
+    if (String(closedImageUid).startsWith('layout-image-')) {
+      setDisplays(prev => prev.filter(d => !(d.id === 'image' && d.uid === closedImageUid)))
+    }
     onImageRemove?.(closedImageUid)
     onClosedImageUidHandled?.()
   }, [closedImageUid, onImageRemove, onClosedImageUidHandled])
@@ -854,29 +904,11 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     const d = displays.find(x => x.uid === selectedUid)
     if (d&&d.noDel) return
 
-    if (d?.id === 'importedasset') {
-      if (d.pendingFile) {
-        setDisplays(prev => prev.filter(item => item.uid !== selectedUid))
-      } else {
-        SceneCommandBus.dispatch({ type: 'scene:importedasset:remove', uid: selectedUid })
-      }
-    } else {
-      // 1. Notify Manager to cleanup topics and markers
-      getDisplayManager().removeDisplay(selectedUid)
-    }
-
-    // 2. Update UI state + aggregate global toggles by remaining checked displays
-    if (d.id === 'image') onImageRemove?.(d.uid)
+    // 只更新 displays 状态，effect 会自动同步到 DisplayManager/layout
     const nextDisplays = displays.filter(item => item.uid !== selectedUid)
     setDisplays(nextDisplays)
     setSelectedUid(null)
-
-    const tfEnabled = nextDisplays.some(item => item.id === 'tf' && item.checked)
-    const mapEnabledNext = nextDisplays.some(item => item.id === 'map' && item.checked)
-    getTfDisplayManager().setEnabled(tfEnabled)
-    rosMgr?.setAutoSubscribeTF?.(tfEnabled)
-    setMapEnabled(mapEnabledNext)
-  }, [selectedUid, displays, rosMgr, setMapEnabled, onImageRemove])
+  }, [selectedUid, displays])
   const handleRename = useCallback(() => {
     if (!selectedUid) return
     const d = displays.find(x => x.uid === selectedUid)
@@ -889,32 +921,21 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     setRenaming(false)
   }, [selectedUid, renameVal])
   const toggleCheck  = useCallback((uid,val) => {
-    const nextDisplays = displays.map(d => d.uid===uid?{...d,checked:val}:d)
-    setDisplays(nextDisplays)
-
-    SceneCommandBus.dispatch({ type:'scene:display:toggle', uid, visible:val })
     const disp = displays.find(d => d.uid === uid)
     if (!disp) return
 
+    // 统一更新 checked 状态（触发勾选框 UI 刷新）
+    setDisplays(prev => prev.map(d => d.uid===uid?{...d,checked:val}:d))
+
     if (disp.id === 'image') {
+      // image：同时控制 panel 显隐
       onImageVisibleChange?.(uid, val)
+      return
     }
 
-    if (disp.id === 'importedasset') {
-      setImportedAssetChecked(uid, val)
-      SceneCommandBus.dispatch({ type: 'scene:importedasset:visible', uid, visible: val })
-    } else {
-      // 通知 DisplayManager 勾选状态变化
-      getDisplayManager().toggleDisplay(uid, val)
-    }
+    // 非 image 类型：effect 会自动同步到 DisplayManager
+  }, [displays, onImageVisibleChange])
 
-    // TF/Map 为全局单例显示，按同类“至少一个勾选”聚合启用状态
-    const tfEnabled = nextDisplays.some(item => item.id === 'tf' && item.checked)
-    const mapEnabledNext = nextDisplays.some(item => item.id === 'map' && item.checked)
-    getTfDisplayManager().setEnabled(tfEnabled)
-    rosMgr?.setAutoSubscribeTF?.(tfEnabled)
-    setMapEnabled(mapEnabledNext)
-  }, [displays, rosMgr, setMapEnabled, onImageVisibleChange])
 
   const renderParams = (d) => {
     if (d.id === 'importedasset') {

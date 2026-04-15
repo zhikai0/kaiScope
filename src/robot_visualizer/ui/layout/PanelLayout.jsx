@@ -34,14 +34,12 @@ const removeLeafAtPath = (node, path) => {
   }
 }
 
-let nodeRootRef = { current: null }
-
 function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel, onImagePanelClose }) {
   const wrapRef = useRef(null)
 
   if (isLeaf(node)) {
     const handleSplit = (dir) => {
-      onUpdate(updateAtPath(nodeRootRef.current, path, (leaf) => ({
+      onUpdate(prev => updateAtPath(prev, path, (leaf) => ({
         kind: 'split',
         dir,
         ratio: 0.5,
@@ -52,12 +50,20 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel,
 
     const handleClose = () => {
       if (totalPanels <= 1) return
-      if (node.ptype === 'image' && node.displayUid) onImagePanelClose?.(node.displayUid)
-      onUpdate(removeLeafAtPath(nodeRootRef.current, path))
+      // image panel 关闭时通知 RobotVisualizer 删除 panel 和 imageTopics，并设置 closedImageUid
+      if (node.ptype === 'image' && node.displayUid) {
+        onUpdate(prev => {
+          const next = removeLeafAtPath(prev, path)
+          return next || { kind: 'leaf', ptype: '3d' }
+        })
+        onImagePanelClose(node.displayUid)
+        return
+      }
+      onUpdate(prev => removeLeafAtPath(prev, path))
     }
 
     const handleChangeType = (ptype) => {
-      onUpdate(updateAtPath(nodeRootRef.current, path, (leaf) => ({ ...leaf, ptype })))
+      onUpdate(prev => updateAtPath(prev, path, (leaf) => ({ ...leaf, ptype })))
     }
 
     return (
@@ -87,7 +93,7 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel,
     if (!size) return
     const dr = delta / size
 
-    onUpdate(updateAtPath(nodeRootRef.current, path, (cur) => ({
+    onUpdate(prev => updateAtPath(prev, path, (cur) => ({
       ...cur,
       ratio: clamp((cur.ratio ?? 0.5) + dr, 0.1, 0.9),
     })))
@@ -135,7 +141,6 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel,
 }
 
 export function PanelLayout({ layout, onUpdate, panelTypes, renderPanel, onImagePanelClose }) {
-  nodeRootRef.current = layout
   const totalPanels = countLeaves(layout)
 
   return (

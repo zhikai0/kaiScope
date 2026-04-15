@@ -84,13 +84,20 @@ export class DisplayManager extends EventBus {
       checked: display.checked !== false,
       params:  display.params || {},
     })
+    // robotmodel: 只在勾选时订阅/渲染，未勾选时等待用户勾选后再处理
+    if (display.id === 'robotmodel') {
+      if (display.checked !== false) {
+        if (display.topic) this._ensureSubscribed(display.topic, display.uid)
+        if (this._lastRobotModel.has(display.uid)) {
+          const urdfText = this._lastRobotModel.get(display.uid)
+          SceneCommandBus.dispatch({ type: 'scene:urdf:load', uid: display.uid, urdfText })
+        }
+      }
+      this.emit('displays', { displays: this._getDisplayList() })
+      return
+    }
     if (display.checked !== false) {
       if (display.topic) this._ensureSubscribed(display.topic, display.uid)
-      
-      // 如果是 robotmodel 且已有缓存，立即重传一次 URDF
-      if (display.id === 'robotmodel' && this._lastRobotModel.has(display.uid)) {
-        this._replayRobotModelsToScene()
-      }
     }
     this.emit('displays', { displays: this._getDisplayList() })
   }
@@ -138,6 +145,12 @@ export class DisplayManager extends EventBus {
       // robotmodel 取消勾选时销毁 URDF 模型
       if (disp.id === 'robotmodel') {
         SceneCommandBus.dispatch({ type: 'scene:urdf:dispose', uid })
+      }
+    } else {
+      // robotmodel 勾选时立即重放缓存的 URDF（如果有）
+      if (disp.id === 'robotmodel' && this._lastRobotModel.has(uid)) {
+        const urdfText = this._lastRobotModel.get(uid)
+        SceneCommandBus.dispatch({ type: 'scene:urdf:load', uid, urdfText })
       }
     }
     this.emit('displays', { displays: this._getDisplayList() })
@@ -260,6 +273,9 @@ export class DisplayManager extends EventBus {
     if (!urdfText || !urdfText.includes('<robot')) return
 
     this._lastRobotModel.set(disp.uid, urdfText)
+
+    // 只在勾选时才加载到场景
+    if (!disp.checked) return
 
     SceneCommandBus.dispatch({
       type:     'scene:urdf:load',
