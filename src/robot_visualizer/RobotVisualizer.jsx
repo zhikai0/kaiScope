@@ -111,7 +111,12 @@ const normalizeLayoutImages = (node, imageTopics, nextTopics = imageTopics, chan
   if (node.kind === 'leaf') {
     if (node.ptype !== 'image') return { node, imageTopics: nextTopics, changed }
 
-    const displayUid = node.displayUid || `layout-image-${node.panelId || 'new'}`
+    // 只有有有效 displayUid 的 image panel 才同步标签（不自动生成）
+    const displayUid = node.displayUid
+    if (!displayUid || typeof displayUid !== 'string' || !displayUid.startsWith('layout-image-')) {
+      // 无效 uid 的 image panel（由普通 panel 临时切换来但还未完成初始化）忽略
+      return { node, imageTopics: nextTopics, changed }
+    }
     let topicMap = nextTopics
     let topicChanged = changed
     if (!(displayUid in topicMap)) {
@@ -119,9 +124,7 @@ const normalizeLayoutImages = (node, imageTopics, nextTopics = imageTopics, chan
       topicChanged = true
     }
 
-    const newNode = node.displayUid === displayUid ? node : { ...node, displayUid }
-
-    return { node: newNode, imageTopics: topicMap, changed: topicChanged }
+    return { node, imageTopics: topicMap, changed: topicChanged }
   }
 
   const left = normalizeLayoutImages(node.a, imageTopics, nextTopics, changed)
@@ -161,6 +164,11 @@ export default function RobotVisualizer({ onBack }) {
   const [goalPoseMode, setGoalPoseMode] = useLocalPersist('kaiscope-goal-pose', false)
   const [showJoystickConfig, setShowJoystickConfig] = useState(false)
 
+  // 用于让 LeftPanel 注册添加标签的回调（标签添加到 LeftPanel 的 displays 中）
+  const addImageLabelCallbackRef = useRef(null)
+  // 用于让 LeftPanel 注册删除标签的回调（layout panel 从 image 切换走时调用）
+  const removeImageLabelRef = useRef(null)
+
   const handleToggleControl = () => {
     setControlMode(v => {
       const next = !v
@@ -190,6 +198,13 @@ export default function RobotVisualizer({ onBack }) {
     })
   }, [])
 
+  const handleAddImageLabel = useCallback((displayUid, topic = '') => {
+    // 1. 设置 imageTopics（panel 渲染需要）
+    setImageTopics(prev => ({ ...prev, [displayUid]: topic || '/camera/image_raw' }))
+    // 2. 调用 LeftPanel 注册的回调，添加标签到 displays
+    addImageLabelCallbackRef.current?.(displayUid, topic || '/camera/image_raw')
+  }, [])
+
   const removeImage = useCallback((displayUid) => {
     setImageTopics(prev => {
       const next = { ...prev }
@@ -205,13 +220,14 @@ export default function RobotVisualizer({ onBack }) {
   }, [])
 
   const setImageVisible = useCallback((displayUid, visible) => {
-    // 勾选框控制：只改 layout 中 panel 的显隐，不修改 imageTopics（保留配置）
+    // 由标签 checked 状态驱动：
+    // - visible=true（勾选）：标签存在则添加/显示 panel
+    // - visible=false（取消勾选）：隐藏 panel，不删除标签（标签本身还在）
     setLayout(prev => {
       if (visible) {
         if (hasImagePanel(prev, displayUid)) return prev
         return appendImagePanel(prev, { kind: 'leaf', ptype: 'image', displayUid, panelId: `image-${displayUid}` })
       } else {
-        // 隐藏：直接移除 panel，不设置 closedImageUid（不删除标签）
         const next = removeLeafByPanelId(prev, `image-${displayUid}`)
         return next || { kind: 'leaf', ptype: '3d' }
       }
@@ -231,6 +247,13 @@ export default function RobotVisualizer({ onBack }) {
 
   const handleImageTopicChange = useCallback((displayUid, topic) => {
     setImageTopics(prev => ({ ...prev, [displayUid]: topic || '/camera/image_raw' }))
+  }, [])
+
+  // 标记 image 标签为失效状态（layout panel 从 image 切换走了）
+  // 直接删除标签，避免残留标签无法操作的问题
+  const handleMarkImageLabelInactive = useCallback((displayUid) => {
+    // 通过 ref 调用 LeftPanel 的删除标签回调
+    removeImageLabelRef.current?.(displayUid)
   }, [])
 
   useEffect(() => {
@@ -275,6 +298,10 @@ export default function RobotVisualizer({ onBack }) {
         panelTypes={PANEL_TYPES}
         renderPanel={renderPanel}
         onImagePanelClose={handleImagePanelClose}
+        setImageTopics={setImageTopics}
+        setClosedImageUid={setClosedImageUid}
+        onAddImageLabel={handleAddImageLabel}
+        onMarkImageLabelInactive={handleMarkImageLabelInactive}
       />
 
       <VirtualJoystick
@@ -305,6 +332,9 @@ export default function RobotVisualizer({ onBack }) {
         closedImageUid={closedImageUid}
         onClosedImageUidHandled={() => setClosedImageUid(null)}
         layoutImageDisplays={layoutImageDisplays}
+        onAddImageLabel={handleAddImageLabel}
+        addImageLabelRef={addImageLabelCallbackRef}
+        removeImageLabelRef={removeImageLabelRef}
       />
 
       {isSingle && (

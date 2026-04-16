@@ -34,7 +34,7 @@ const removeLeafAtPath = (node, path) => {
   }
 }
 
-function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel, onImagePanelClose }) {
+function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel, onImagePanelClose, setImageTopics, setClosedImageUid, onAddImageLabel, onMarkImageLabelInactive }) {
   const wrapRef = useRef(null)
 
   if (isLeaf(node)) {
@@ -63,7 +63,38 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel,
     }
 
     const handleChangeType = (ptype) => {
-      onUpdate(prev => updateAtPath(prev, path, (leaf) => ({ ...leaf, ptype })))
+      const isImage = node.ptype === 'image'
+      const willBeImage = ptype === 'image'
+
+      // 只有从非 image 类型切换到 image 类型时才添加标签
+      if (willBeImage && !isImage) {
+        // 切换到 image 类型：生成 displayUid 并添加 image 标签
+        const displayUid = `layout-image-${Date.now()}`
+        const panelId = `image-${displayUid}`
+        onAddImageLabel?.(displayUid, '/camera/image_raw')
+        // 同步 imageTopics
+        setImageTopics(prev => ({
+          ...prev,
+          [displayUid]: '/camera/image_raw',
+        }))
+        onUpdate(prev => updateAtPath(prev, path, () => ({ kind: 'leaf', ptype, displayUid, panelId })))
+      } else if (willBeImage && isImage) {
+        // panel 已经是 image，切换到 image 无操作（保持现有状态）
+        return
+      } else {
+        // 切换到其他类型：清理 image 状态（displayUid 和 panelId 都要清）
+        if (node.displayUid && node.ptype === 'image') {
+          // 清理 imageTopics 中对应的 topic
+          setImageTopics(prev => {
+            const next = { ...prev }
+            delete next[node.displayUid]
+            return next
+          })
+          // 标记标签为失效状态（不再关联到 image panel）
+          onMarkImageLabelInactive?.(node.displayUid)
+        }
+        onUpdate(prev => updateAtPath(prev, path, () => ({ kind: 'leaf', ptype })))
+      }
     }
 
     return (
@@ -120,6 +151,10 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel,
           panelTypes={panelTypes}
           renderPanel={renderPanel}
           onImagePanelClose={onImagePanelClose}
+          setImageTopics={setImageTopics}
+          setClosedImageUid={setClosedImageUid}
+          onAddImageLabel={onAddImageLabel}
+          onMarkImageLabelInactive={onMarkImageLabelInactive}
         />
       </div>
 
@@ -134,13 +169,17 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel,
           panelTypes={panelTypes}
           renderPanel={renderPanel}
           onImagePanelClose={onImagePanelClose}
+          setImageTopics={setImageTopics}
+          setClosedImageUid={setClosedImageUid}
+          onAddImageLabel={onAddImageLabel}
+          onMarkImageLabelInactive={onMarkImageLabelInactive}
         />
       </div>
     </div>
   )
 }
 
-export function PanelLayout({ layout, onUpdate, panelTypes, renderPanel, onImagePanelClose }) {
+export function PanelLayout({ layout, onUpdate, panelTypes, renderPanel, onImagePanelClose, setImageTopics, setClosedImageUid, onAddImageLabel, onMarkImageLabelInactive }) {
   const totalPanels = countLeaves(layout)
 
   return (
@@ -153,6 +192,10 @@ export function PanelLayout({ layout, onUpdate, panelTypes, renderPanel, onImage
         panelTypes={panelTypes}
         renderPanel={renderPanel}
         onImagePanelClose={onImagePanelClose}
+        setImageTopics={setImageTopics}
+        setClosedImageUid={setClosedImageUid}
+        onAddImageLabel={onAddImageLabel}
+        onMarkImageLabelInactive={onMarkImageLabelInactive}
       />
     </div>
   )

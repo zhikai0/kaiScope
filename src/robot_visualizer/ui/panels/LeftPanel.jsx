@@ -576,7 +576,7 @@ const createLayoutImageDisplay = (displayUid) => ({
   params: { topic: '/camera/image_raw' },
 })
 
-export default function LeftPanel({ visible: visibleProp, onVisibleChange, onImageAdd, onImageRemove = () => {}, onImageTopicChange, onImageVisibleChange, closedImageUid, onClosedImageUidHandled = () => {}, layoutImageDisplays = [] }) {
+export default function LeftPanel({ visible: visibleProp, onVisibleChange, onImageAdd, onImageRemove = () => {}, onImageTopicChange, onImageVisibleChange, closedImageUid, onClosedImageUidHandled = () => {}, layoutImageDisplays = [], onAddImageLabel, addImageLabelRef, removeImageLabelRef }) {
   const [_vis, _setVis]       = useState(true)
   const visible    = visibleProp!==undefined ? visibleProp : _vis
   const setVisible = (v) => { _setVis(v); onVisibleChange&&onVisibleChange(v) }
@@ -789,8 +789,71 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     onClosedImageUidHandled?.()
   }, [closedImageUid, onImageRemove, onClosedImageUidHandled])
 
+  // layoutImageDisplays 变化时：删除不在 layout 中的 layout-image-* 标签
+  // 注意：只有当 closedImageUid 被设置时（即点击了 Delete 按钮）才删除标签
+  // 取消勾选只是隐藏 panel，不删除标签
   useEffect(() => {
-    const store = getImportedAssetStore()
+    // 只有 closedImageUid 被设置时才执行删除（区分隐藏和删除）
+    if (!closedImageUid) return
+    
+    const layoutUids = new Set(layoutImageDisplays.map(d => d.displayUid))
+    setDisplays(prev => prev.filter(d => {
+      // 非 image 类型保留
+      if (d.id !== 'image') return true
+      // 手动添加的 image（非 layout-image-* 前缀）保留
+      if (!String(d.uid).startsWith('layout-image-')) return true
+      // 只有 closedImageUid 对应的标签才删除
+      if (d.uid === closedImageUid) return false
+      // 其他 layout-image-* 标签保留（可能在其他 panel 中）
+      return true
+    }))
+  }, [layoutImageDisplays, closedImageUid])
+
+  // 注册添加标签的回调，让 RobotVisualizer 的 handleAddImageLabel 能够调用
+  useEffect(() => {
+    // 如果传入了 addImageLabelRef，设置它；否则通过 onAddImageLabel 传递
+    if (addImageLabelRef) {
+      addImageLabelRef.current = (displayUid, topic) => {
+        if (!displayUid) return
+        const newDisp = {
+          uid: displayUid,
+          id: 'image',
+          label: 'Image',
+          color: '#af52de',
+          status: 'warn',
+          checked: true,
+          icon: '🖼️',
+          params: { topic: topic || '/camera/image_raw' },
+        }
+        setDisplays(prev => [...prev, newDisp])
+      }
+    } else if (onAddImageLabel) {
+      onAddImageLabel((displayUid, topic) => {
+        if (!displayUid) return
+        const newDisp = {
+          uid: displayUid,
+          id: 'image',
+          label: 'Image',
+          color: '#af52de',
+          status: 'warn',
+          checked: true,
+          icon: '🖼️',
+          params: { topic: topic || '/camera/image_raw' },
+        }
+        setDisplays(prev => [...prev, newDisp])
+      })
+    }
+  }, [onAddImageLabel, addImageLabelRef])
+
+  // 注册删除标签的回调，当 layout panel 从 image 切换走时调用（直接删除标签）
+  useEffect(() => {
+    if (removeImageLabelRef) {
+      removeImageLabelRef.current = (displayUid) => {
+        setDisplays(prev => prev.filter(d => d.uid !== displayUid))
+      }
+    }
+  }, [removeImageLabelRef])
+  useEffect(() => {
     const syncImportedAssets = (assets) => {
       setDisplays(prev => {
         const importedUids = new Set(assets.map(asset => asset.uid))
@@ -825,12 +888,14 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
       })
     }
 
-    syncImportedAssets(store.getAssets())
-    return store.onChange(syncImportedAssets)
+    syncImportedAssets(getImportedAssetStore().getAssets())
+    return getImportedAssetStore().onChange(syncImportedAssets)
   }, [])
 
   const handleAdd    = useCallback((dt) => {
-    const uid = `${dt.id}-${Date.now()}`
+    const uid = dt.id === 'image'
+      ? `layout-image-${Date.now()}`
+      : `${dt.id}-${Date.now()}`
     const initTopic = dt.topicOverride || ''
     const initParams = initTopic ? { topic: initTopic } : {}
     const newDisp = dt.id === 'importedasset'
@@ -858,6 +923,7 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     // 3. 如果有 topicOverride，立即通知 DisplayManager 订阅
     if (initTopic) getDisplayManager().updateParam(uid, 'topic', initTopic)
     if (dt.id==='image') {
+      // 手动添加 image 时同时创建 panel
       onImageAdd?.(uid, initTopic)
       onImageTopicChange?.(uid, initTopic)
     }
@@ -904,11 +970,15 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     const d = displays.find(x => x.uid === selectedUid)
     if (d&&d.noDel) return
 
+    // 如果是 image 类型，通知 layout 关闭对应的 image panel
+    if (d?.id === 'image') {
+      onImageRemove?.(selectedUid)
+    }
+
     // 只更新 displays 状态，effect 会自动同步到 DisplayManager/layout
-    const nextDisplays = displays.filter(item => item.uid !== selectedUid)
-    setDisplays(nextDisplays)
+    setDisplays(prev => prev.filter(item => item.uid !== selectedUid))
     setSelectedUid(null)
-  }, [selectedUid, displays])
+  }, [selectedUid, onImageRemove])
   const handleRename = useCallback(() => {
     if (!selectedUid) return
     const d = displays.find(x => x.uid === selectedUid)
@@ -924,15 +994,14 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     const disp = displays.find(d => d.uid === uid)
     if (!disp) return
 
-    // 统一更新 checked 状态（触发勾选框 UI 刷新）
+    // 统一更新 checked 状态
     setDisplays(prev => prev.map(d => d.uid===uid?{...d,checked:val}:d))
 
+    // 通知 DisplayManager 当前勾选状态（由 DM 判断是否需要渲染）
     if (disp.id === 'image') {
-      // image：同时控制 panel 显隐
+      // image：传入勾选状态，由 DisplayManager 判断 panel 显隐
       onImageVisibleChange?.(uid, val)
-      return
     }
-
     // 非 image 类型：effect 会自动同步到 DisplayManager
   }, [displays, onImageVisibleChange])
 

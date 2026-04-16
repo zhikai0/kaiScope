@@ -11,6 +11,7 @@ export function PanelCell({
   onClose,
   onChangeType,
   renderPanel,
+  onImagePanelClose,
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const wrapRef = useRef(null)
@@ -33,7 +34,7 @@ export function PanelCell({
           <div className="pcell-actions">
             <button className="pcell-btn" title="Split right" onClick={onSplitH}>⊞</button>
             <button className="pcell-btn" title="Split down" onClick={onSplitV}>⊟</button>
-            <button className="pcell-btn" title="Change type" onClick={() => setMenuOpen(v => !v)}>⋯</button>
+            <button className="pcell-btn" title="Change type" onMouseDown={e => { e.stopPropagation(); setMenuOpen(v => !v) }}>⋯</button>
             {canClose && <button className="pcell-btn close" title="Close" onClick={onClose}>✕</button>}
           </div>
           {menuOpen && (
