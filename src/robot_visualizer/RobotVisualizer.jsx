@@ -185,7 +185,7 @@ export default function RobotVisualizer({ onBack }) {
       kind: 'split',
       dir: 'v',
       ratio: 0.5,
-      a: prev,
+      a: { ...prev, panelId: prev.panelId || 'root' },
       b: { kind: 'leaf', ptype: '3d', panelId: `panel-${Date.now()}` },
     }))
   }

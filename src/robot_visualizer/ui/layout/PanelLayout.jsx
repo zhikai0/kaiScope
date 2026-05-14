@@ -43,7 +43,7 @@ function SplitNode({ node, path, totalPanels, onUpdate, panelTypes, renderPanel,
         kind: 'split',
         dir,
         ratio: 0.5,
-        a: leaf,
+        a: { ...leaf, panelId: 'root' },
         b: { kind: 'leaf', ptype: '3d', panelId: `panel-${Date.now()}` },
       })))
     }

@@ -25,7 +25,7 @@ def generate_launch_description():
             parameters=[{'port': 8765,}],
         ),
         TimerAction(
-            period=3.0,
+            period=0.1,
             actions=[
                 ExecuteProcess(
                     cmd=['pnpm', 'run', 'dev','--host'],

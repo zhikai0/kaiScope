@@ -26,6 +26,9 @@ importers:
       three:
         specifier: ^0.177.0
         version: 0.177.0
+      uplot:
+        specifier: ^1.6.31
+        version: 1.6.32
       urdf-loader:
         specifier: ^0.12.6
         version: 0.12.6(three@0.177.0)
@@ -1134,6 +1137,9 @@ packages:
     hasBin: true
     peerDependencies:
       browserslist: '>= 4.21.0'
+
+  uplot@1.6.32:
+    resolution: {integrity: sha512-KIMVnG68zvu5XXUbC4LQEPnhwOxBuLyW1AHtpm6IKTXImkbLgkMy+jabjLgSLMasNuGGzQm/ep3tOkyTxpiQIw==}
 
   urdf-loader@0.12.6:
     resolution: {integrity: sha512-EwpgOCPe6Tep2+MXoo/r13keHaKQXMcM+4s9+jX0NRxNS/QSNuP5JPdk5AIgWEoEB43AkEj9Vk+Nr53NkXgSbA==}
@@ -2244,6 +2250,8 @@ snapshots:
       browserslist: 4.28.2
       escalade: 3.2.0
       picocolors: 1.1.1
+
+  uplot@1.6.32: {}
 
   urdf-loader@0.12.6(three@0.177.0):
     dependencies:

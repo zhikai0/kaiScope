@@ -88,9 +88,13 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
     controls.rotateSpeed = 0.7
     controls.panSpeed = 0.7
 
-    const now = Date.now()
-    const persistedFresh = now - persistedState.current.at < 10_000
-    if (persistedFresh && persistedState.current.cameraPos && persistedState.current.cameraTarget) {
+    controls.addEventListener('change', () => {
+      persistedState.current.cameraPos = camera.position.clone()
+      persistedState.current.cameraTarget = controls.target.clone()
+      saveViewportState(panelId, persistedState.current)
+    })
+
+    if (persistedState.current.cameraPos && persistedState.current.cameraTarget) {
       camera.position.copy(persistedState.current.cameraPos)
       controls.target.copy(persistedState.current.cameraTarget)
       controls.update()
