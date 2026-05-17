@@ -5,15 +5,16 @@ import { BaseMarker } from './BaseMarker'
  * PathMarker — 渲染 nav_msgs/Path（或预计算好的点数组）
  *
  * lineStyle:
- *  'lines'     — TubeGeometry 圆柱管道线（默认）
- *  'billboard' — 始终朝向相机的扁平面片线
+ *  'lines'       — TubeGeometry 圆柱管道线（默认）
+ *  'pointlines'  — 细管线 + 每路径点圆球（InstancedMesh）
  *
  * options:
  *  color     {string}  颜色，默认 '#19ff00'
  *  alpha     {number}  透明度 0-1，默认 1
- *  lineStyle {'lines'|'billboard'}  默认 'lines'
- *  lineWidth {number}  lines 模式: 管道半径（米），默认 0.04
- *             billboard 模式: 面片半宽（米），默认 0.06
+ *  lineStyle {'lines'|'pointlines'}  默认 'lines'
+ *  lineWidth {number}  lines/pointlines 模式: 管道半径（米），默认 0.05
+ *  pointSize {number}  pointlines 模式: 球体半径（米），默认 0.1
+ *  pointColor {string} plines 模式: 球体颜色，默认 '#ff0000' (红色)
  */
 export class PathMarker extends BaseMarker {
   static get TYPE() { return 'path' }
@@ -53,16 +54,27 @@ export class PathMarker extends BaseMarker {
     const alpha     = this.options.alpha     ?? 1.0
     const lineStyle = this.options.lineStyle ?? 'lines'
     const col = new THREE.Color(color)
-    const mat = new THREE.MeshBasicMaterial({
+    const mat = new THREE.MeshPhongMaterial({
       color:       col,
       opacity:     alpha,
       transparent: alpha < 1,
       side:        THREE.DoubleSide,
       depthWrite:  alpha >= 1,
+      shininess:   60,
     })
 
-    if (lineStyle === 'billboard') {
-      this._mesh = this._buildBillboard(pts, mat)
+    if (lineStyle === 'pointlines') {
+      const sphereColor = new THREE.Color(this.options.pointColor ?? '#ff0000')
+      const sphereMat = new THREE.MeshPhongMaterial({
+        color:       sphereColor,
+        opacity:     alpha,
+        transparent: alpha < 1,
+        depthWrite:  alpha >= 1,
+        shininess:   80,
+      })
+      this._mesh     = this._buildPointLines(pts, sphereMat)
+      this._lineMesh = this._buildTube(pts, mat)
+      if (this._lineMesh) this.root.add(this._lineMesh)
     } else {
       this._mesh = this._buildTube(pts, mat)
     }
@@ -72,7 +84,7 @@ export class PathMarker extends BaseMarker {
 
   /** 圆柱管道线（TubeGeometry） */
   _buildTube(pts, mat) {
-    const radius   = this.options.lineWidth ?? 0.04
+    const radius   = this.options.lineWidth ?? 0.025
     const vectors  = pts.map(p => new THREE.Vector3(p.x ?? 0, p.y ?? 0, p.z ?? 0))
     const curve    = new THREE.CatmullRomCurve3(vectors)
     const tubeSeg  = Math.min(pts.length * 3, 1024)
@@ -80,59 +92,19 @@ export class PathMarker extends BaseMarker {
     return new THREE.Mesh(geo, mat)
   }
 
-  /**
-   * Billboard 线：每相邻两点生成一个四边形面片，面片朝向由渲染时动态更新。
-   * 此处预生成 geometry，在 onBeforeRender 里更新顶点使其始终朝相机。
-   */
-  _buildBillboard(pts, mat) {
-    const hw = this.options.lineWidth ?? 0.06  // 半宽（米）
-    const n  = pts.length - 1  // 段数
-    // 每段 4 顶点，2 三角形
-    const positions = new Float32Array(n * 4 * 3)
-    const indices   = []
-
-    // 初始化顶点（占位）
-    for (let i = 0; i < n; i++) {
-      const p0 = pts[i],   p1 = pts[i + 1]
-      const base = i * 4 * 3
-      // 先填充实际坐标，onBeforeRender 会覆盖
-      for (let v = 0; v < 4; v++) {
-        positions[base + v*3]   = (v < 2 ? p0.x : p1.x) ?? 0
-        positions[base + v*3+1] = (v < 2 ? p0.y : p1.y) ?? 0
-        positions[base + v*3+2] = (v < 2 ? p0.z : p1.z) ?? 0
-      }
-      const vi = i * 4
-      indices.push(vi, vi+1, vi+2,  vi+1, vi+3, vi+2)
+  /** InstancedMesh 渲染圆球，pointlines 模式专用 */
+  _buildPointLines(pts, mat) {
+    const radius = this.options.pointSize ?? 0.1
+    const geo    = new THREE.SphereGeometry(radius, 12, 8)
+    const mesh   = new THREE.InstancedMesh(geo, mat, pts.length)
+    mesh.frustumCulled = false
+    const dummy = new THREE.Object3D()
+    for (let i = 0; i < pts.length; i++) {
+      dummy.position.set(pts[i].x ?? 0, pts[i].y ?? 0, pts[i].z ?? 0)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(i, dummy.matrix)
     }
-
-    const geo = new THREE.BufferGeometry()
-    const posAttr = new THREE.BufferAttribute(positions, 3)
-    posAttr.setUsage(THREE.DynamicDrawUsage)
-    geo.setAttribute('position', posAttr)
-    geo.setIndex(indices)
-
-    const mesh = new THREE.Mesh(geo, mat)
-    // 每帧更新顶点使面片朝相机
-    mesh.onBeforeRender = (renderer, scene, camera) => {
-      const pos  = geo.attributes.position
-      const camPos = camera.position
-      const up  = new THREE.Vector3(0, 1, 0)
-      for (let i = 0; i < n; i++) {
-        const p0 = new THREE.Vector3(pts[i].x??0,   pts[i].y??0,   pts[i].z??0)
-        const p1 = new THREE.Vector3(pts[i+1].x??0, pts[i+1].y??0, pts[i+1].z??0)
-        const dir    = p1.clone().sub(p0).normalize()
-        const mid    = p0.clone().add(p1).multiplyScalar(0.5)
-        const toEye  = camPos.clone().sub(mid).normalize()
-        const perp   = dir.clone().cross(toEye).normalize().multiplyScalar(hw)
-        const base = i * 4
-        pos.setXYZ(base+0, p0.x - perp.x, p0.y - perp.y, p0.z - perp.z)
-        pos.setXYZ(base+1, p0.x + perp.x, p0.y + perp.y, p0.z + perp.z)
-        pos.setXYZ(base+2, p1.x - perp.x, p1.y - perp.y, p1.z - perp.z)
-        pos.setXYZ(base+3, p1.x + perp.x, p1.y + perp.y, p1.z + perp.z)
-      }
-      pos.needsUpdate = true
-      geo.computeVertexNormals()
-    }
+    mesh.instanceMatrix.needsUpdate = true
     return mesh
   }
 
@@ -143,13 +115,21 @@ export class PathMarker extends BaseMarker {
       this.root.remove(this._mesh)
       this._mesh = null
     }
+    if (this._lineMesh) {
+      this._lineMesh.geometry.dispose()
+      this._lineMesh.material.dispose()
+      this.root.remove(this._lineMesh)
+      this._lineMesh = null
+    }
   }
 
-  setStyle({ color, alpha, lineStyle, lineWidth } = {}) {
-    if (color     !== undefined) this.options.color     = color
-    if (alpha     !== undefined) this.options.alpha     = alpha
-    if (lineStyle !== undefined) this.options.lineStyle = lineStyle
-    if (lineWidth !== undefined) this.options.lineWidth = lineWidth
+  setStyle({ color, alpha, lineStyle, lineWidth, pointSize, pointColor } = {}) {
+    if (color      !== undefined) this.options.color      = color
+    if (alpha      !== undefined) this.options.alpha      = alpha
+    if (lineStyle  !== undefined) this.options.lineStyle  = lineStyle
+    if (lineWidth  !== undefined) this.options.lineWidth  = lineWidth
+    if (pointSize  !== undefined) this.options.pointSize  = pointSize
+    if (pointColor !== undefined) this.options.pointColor = pointColor
     if (this._pts) this._rebuild(this._pts)
   }
 

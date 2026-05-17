@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect } from 'react'
+import { useState, useCallback, useRef, useEffect, useMemo, useLayoutEffect, memo } from 'react'
 import { useSimStore } from '../store/simStore'
 import { useMapStore } from '../store/mapStore'
 import { useRos } from '../hooks/useRos'
@@ -83,7 +83,7 @@ function PNum({ defaultValue, value: valueProp, onChange, onBlur, step=1, min, m
 }
 
 // ── PColor: unified color swatch + RGB input ──────────────────────────────
-function PColor({ label, defaultHex='#ffffff', indent=0, onChange }) {
+function PColor({ label, defaultHex='#ffffff', value: valueProp, indent=0, onChange }) {
   const h2r = (hex) => {
     const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16)
     return `${r}:${g}:${b}`
@@ -92,17 +92,46 @@ function PColor({ label, defaultHex='#ffffff', indent=0, onChange }) {
     const p = str.split(':').map(s => { const v=parseInt(s); return isNaN(v)?0:Math.max(0,Math.min(255,v)) })
     return p.length===3 ? '#'+p.map(v=>v.toString(16).padStart(2,'0')).join('') : null
   }
+  const isControlled = valueProp !== undefined
   const [hex, setHex] = useState(defaultHex)
   const [rgb, setRgb] = useState(() => h2r(defaultHex))
-  const apply = (h) => { setHex(h); setRgb(h2r(h)); onChange&&onChange(h) }
+  // debounce timer to avoid flooding parent with rapid onChange events from color picker
+  const debounceRef = useRef(null)
+
+  const currentHex = isControlled ? valueProp : hex
+
+  // 同步外部 value 变化到 rgb 显示（受控模式下需要）
+  useEffect(() => {
+    if (isControlled && valueProp) {
+      setRgb(h2r(valueProp))
+    }
+  }, [isControlled, valueProp])
+
+  const scheduleOnChange = (h) => {
+    clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      onChange && onChange(h)
+    }, 150)
+  }
+
+  const handleChange = (h) => {
+    if (!isControlled) { setHex(h); setRgb(h2r(h)) }
+    scheduleOnChange(h)
+  }
+  const handleRgb = (str) => {
+    setRgb(str)
+    const h = r2h(str)
+    if (h) { if (!isControlled) setHex(h); scheduleOnChange(h) }
+  }
+
   return (
     <PR label={label} indent={indent}>
       <label className="p-swatch-wrap">
-        <input type="color" value={hex} className="p-swatch-input" onChange={e => apply(e.target.value)}/>
-        <span className="p-swatch-box" style={{background:hex}}/>
+        <input type="color" value={currentHex} className="p-swatch-input" onChange={e => handleChange(e.target.value)}/>
+        <span className="p-swatch-box" style={{background:currentHex}}/>
       </label>
       <input className="p-rgb" value={rgb}
-        onChange={e => { setRgb(e.target.value); const h=r2h(e.target.value); if(h) apply(h) }}
+        onChange={e => handleRgb(e.target.value)}
         placeholder="R:G:B"/>
     </PR>
   )
@@ -207,8 +236,8 @@ function DNode({ label, checked, onChange, selected, onSelect, typeId, children,
   return (
     <div className="di-wrap">
       <div className={`di-row ${open?'exp':''} ${selected?'sel':''}`}
-        onClick={() => onSelect()}
-        onDoubleClick={() => { if(has) setOpen(v=>!v) }}>
+        onClick={onSelect}
+        onDoubleClick={e => { if(has) setOpen(v=>!v) }}>
         <span className={`di-arr ${has?'':'inv'}`}>{open?'▾':'▸'}</span>
         <span className="di-type-icon">{TYPE_ICONS[typeId]||TYPE_ICONS.default}</span>
         <span className="di-lbl">{label}</span>
@@ -344,7 +373,7 @@ function TfGroupNode({ label, defaultOpen=true, indent=0, children }) {
 }
 
 /** Flat frame node under Frames group */
-function TfFrameItem({ node, hidden, onToggle, indent=0 }) {
+const TfFrameItem = memo(function _TfFrameItem({ node, hidden, onToggle, indent=0 }) {
   const [open, setOpen] = useState(false)
   const isVisible = !hidden.has(node.name)
   const fv = (v) => v ? `${+v.x.toFixed(3)}; ${+v.y.toFixed(3)}; ${+v.z.toFixed(3)}` : '—'
@@ -372,7 +401,7 @@ function TfFrameItem({ node, hidden, onToggle, indent=0 }) {
       )}
     </div>
   )
-}
+})
 
 function TfFrameTree() {
   const tfDisp = getTfDisplayManager()
@@ -508,7 +537,8 @@ function TfFrameTree() {
         {!roots.length
           ? <div className="lp-empty">No TF frames — connect Foxglove bridge.</div>
           : roots.map(r=><TfTreeNode key={r.name} node={r} depth={0}
-              selected={selected} onSelect={setSelected}/>)}
+              selected={selected} onSelect={setSelected}/>)
+        }
       </TfGroupNode>
     </div>
   )
@@ -558,11 +588,11 @@ function AddModal({ onAdd, onClose, liveChannels }) {
 // ── Main LeftPanel ───────────────────────────────────────────────────────
 const DEFAULT_DISPLAYS = [
   { uid:'global-1',  id:'global',     label:'Global Options',color:'#8e8e93', status:'ok',   checked:true,  icon:'⚙️', noChk:true, noDel:true },
-  { uid:'grid-1',    id:'grid',       label:'Grid',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'⊞' },
+  { uid:'grid-1',    id:'grid',       label:'Grid',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'⊞', params:{ color:'#a0a0a4', alpha:0.5, cellCount:10, cellSize:1 } },
   { uid:'robot-1',   id:'robotmodel', label:'RobotModel',    color:'#0a84ff', status:'ok',   checked:true,  icon:'🤖', topic:'/robot_description', params:{ topic:'/robot_description' }},
   { uid:'tf-1',      id:'tf',         label:'TF',            color:'#ff9f0a', status:'ok',   checked:true,  icon:'📐' },
   { uid:'map-1',     id:'map',        label:'SatelliteMap',  color:'#34c759', status:'ok',   checked:false, icon:'🗺' },
-  { uid:'path-1',    id:'path',       label:'Path',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'〰' },
+  { uid:'path-1',    id:'path',       label:'Path',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'〰', params:{ topic:'', color:'#19ff00', alpha:1, lineStyle:'lines' } },
 ]
 
 const createLayoutImageDisplay = (displayUid) => ({
@@ -606,6 +636,26 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   const [tfFrames,    setTfFrames]    = useState([])
   const removedByLayoutRef = useRef(new Set())  // 标记由 layout 关闭触发的删除，避免重复处理
 
+  // useRos 必须在这里调用，确保所有 useEffect 都能访问 rosMgr
+  const { channels: liveChannels, mgr: rosMgr } = useRos()
+
+  // 检测 TF 勾选状态变化，控制订阅和数据
+  useEffect(() => {
+    const tfDisp = displays.find(d => d.id === 'tf')
+    const isChecked = tfDisp?.checked ?? false
+
+    if (!isChecked && rosMgr) {
+      // 取消勾选时：取消订阅 TF topic 并清空 TfManager 数据
+      rosMgr.setAutoSubscribeTF(false)
+      getTfManager().clear?.()
+      getTfDisplayManager().setEnabled(false)
+    } else if (isChecked && rosMgr) {
+      // 重新勾选时：恢复订阅
+      rosMgr.setAutoSubscribeTF(true)
+      getTfDisplayManager().setEnabled(true)
+    }
+  }, [displays, rosMgr])
+
   useEffect(() => {
     const mgr = getTfManager()
     const onUpdate = () => {
@@ -618,12 +668,15 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     return () => mgr.off('update', onUpdate)
   }, [])
 
-  const { channels: liveChannels, mgr: rosMgr } = useRos()
-
+  // TF 勾选框只控制场景 marker 的显示/隐藏，不控制订阅
+  // TF 数据始终保持订阅，由 RosDataManager 管理生命周期
   useEffect(() => {
     const tfEnabled = displays.some(item => item.id === 'tf' && item.checked)
-    rosMgr?.setAutoSubscribeTF?.(tfEnabled)
-  }, [displays, rosMgr])
+    getTfDisplayManager().setEnabled(tfEnabled)
+  }, [displays])
+
+  // 保持 TF 始终订阅（由 RosDataManager 管理）
+  // 注意：这里不再调用 rosMgr.setAutoSubscribeTF，因为它会清除旧数据
 
   // 初始化 & displays 变化时：同步所有 display 状态到 DisplayManager
   // 确保状态驱动：勾选状态、topic 等变更都能自动同步
@@ -777,6 +830,17 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     // 通知 3D 场景清理资源，但保持当前 view mode
     SceneCommandBus.dispatch({ type: 'scene:reset' })
   }, [resetScene])
+
+  // Grid params 从 localStorage 恢复后，同步到 3D 场景（页面刷新后生效）
+  useEffect(() => {
+    const gridDisp = displays.find(d => d.id === 'grid')
+    if (!gridDisp) return
+    const { color, alpha, cellCount, cellSize } = gridDisp.params || {}
+    if (color    !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:color', color })
+    if (alpha    !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:alpha', alpha })
+    if (cellCount !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:count', count: cellCount })
+    if (cellSize  !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:size', size: cellSize })
+  }, [])  // 仅初始化时执行一次，之后由各 onChange 处理
 
   useEffect(() => {
     if (!closedImageUid) return
@@ -1045,10 +1109,29 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     )
     if (d.id==='grid') return (
       <>
-        <PColor label="Color" defaultHex="#a0a0a4" indent={1} onChange={hex=>SceneCommandBus.dispatch({ type:'scene:grid:color', color:hex })}/>
-        <PR label="Alpha" indent={1}><PNum defaultValue={0.5} step={0.05} min={0} max={1} onChange={e=>SceneCommandBus.dispatch({ type:'scene:grid:alpha', alpha:parseFloat(e.target.value)||0.5 })}/></PR>
-        <PR label="Cell Count" indent={1}><PNum defaultValue={10} step={1} min={1} max={200} onChange={e=>SceneCommandBus.dispatch({ type:'scene:grid:count', count:parseInt(e.target.value)||10 })}/></PR>
-        <PR label="Cell Size" indent={1}><PNum defaultValue={1} step={0.5} min={0.1} onChange={e=>SceneCommandBus.dispatch({ type:'scene:grid:size', size:parseFloat(e.target.value)||1 })}/></PR>
+        <PColor label="Color" value={d.params?.color||'#a0a0a4'} indent={1}
+          onChange={hex => {
+            setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, color:hex}} : x))
+            SceneCommandBus.dispatch({ type:'scene:grid:color', color:hex })
+          }}/>
+        <PR label="Alpha" indent={1}><PNum value={d.params?.alpha??0.5} step={0.05} min={0} max={1}
+          onChange={e => {
+            const v = parseFloat(e.target.value)||0.5
+            setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, alpha:v}} : x))
+            SceneCommandBus.dispatch({ type:'scene:grid:alpha', alpha:v })
+          }}/></PR>
+        <PR label="Cell Count" indent={1}><PNum value={d.params?.cellCount??10} step={1} min={1} max={200}
+          onChange={e => {
+            const v = parseInt(e.target.value)||10
+            setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, cellCount:v}} : x))
+            SceneCommandBus.dispatch({ type:'scene:grid:count', count:v })
+          }}/></PR>
+        <PR label="Cell Size" indent={1}><PNum value={d.params?.cellSize??1} step={0.5} min={0.1}
+          onChange={e => {
+            const v = parseFloat(e.target.value)||1
+            setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, cellSize:v}} : x))
+            SceneCommandBus.dispatch({ type:'scene:grid:size', size:v })
+          }}/></PR>
       </>
     )
     if (d.id==='path') return (
@@ -1062,9 +1145,21 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
             setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, topic:v}} : x))
           }}
         /></PR>
-        <PColor label="Color" indent={1} defaultHex={d.params?.color||'#19ff00'} onChange={v => getDisplayManager().updateParam(d.uid,'color',v)}/>
-        <PR label="Alpha" indent={1}><PNum defaultValue={d.params?.alpha??1} step={0.05} min={0} max={1} onChange={e => getDisplayManager().updateParam(d.uid,'alpha',parseFloat(e.target.value)||1)}/></PR>
-        <PR label="Line Style" indent={1}><PSelect value={d.params?.lineStyle||'lines'} onChange={e => getDisplayManager().updateParam(d.uid,'lineStyle',e.target.value)}><option value="lines">Lines</option><option value="billboard">Billboard</option></PSelect></PR>
+        <PColor label="Color" indent={1} value={d.params?.color||'#19ff00'}
+          onChange={v => {
+            setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, color:v}} : x))
+            getDisplayManager().updateParam(d.uid,'color',v)
+          }}/>
+        <PR label="Alpha" indent={1}><PNum value={d.params?.alpha??1} step={0.05} min={0} max={1}
+          onChange={e => {
+            const v = parseFloat(e.target.value)||1
+            setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, alpha:v}} : x))
+            getDisplayManager().updateParam(d.uid,'alpha',v)
+          }}/></PR>
+        <PR label="Line Style" indent={1}><PSelect value={d.params?.lineStyle||'lines'} onChange={e => {
+          setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, lineStyle:e.target.value}} : x))
+          getDisplayManager().updateParam(d.uid,'lineStyle',e.target.value)
+        }}><option value="lines">Lines</option><option value="pointlines">PointLines</option></PSelect></PR>
       </>
     )
     if (d.id==='robotmodel') return <PR label="Topic" indent={1}><TopicSelect

@@ -7,7 +7,8 @@ import LeftPanel from './ui/panels/LeftPanel'
 import Viewport3D from './scene/Viewport3D'
 import ImagePanel from './ui/components/ImagePanel'
 import LogPanel from './ui/components/LogPanel'
-import VirtualJoystick from './ui/components/VirtualJoystick'
+import ToolPanel from './ui/components/ToolPanel'
+import EditPanel from './ui/components/EditPanel'
 import { getTfDisplayManager } from './manager/TfDisplayManager'
 import { PanelLayout } from './ui/layout/PanelLayout'
 import { PANEL_TYPES } from './ui/layout/panelTypes'
@@ -160,23 +161,20 @@ export default function RobotVisualizer({ onBack }) {
   const [imageTopics, setImageTopics] = useLocalPersist('kaiscope-image-topics', {})
   const [closedImageUid, setClosedImageUid] = useState(null)
   const [displaysVisible, setDisplaysVisible] = useState(true)
-  const [controlMode, setControlMode] = useLocalPersist('kaiscope-ctrl-mode', false)
-  const [goalPoseMode, setGoalPoseMode] = useLocalPersist('kaiscope-goal-pose', false)
-  const [showJoystickConfig, setShowJoystickConfig] = useState(false)
+  const [toolMode, setToolMode] = useLocalPersist('kaiscope-tool-mode', false)
+  const [editorMode, setEditorMode] = useLocalPersist('kaiscope-editor-mode', false)
+  const [goalposeMode, setGoalposeMode] = useLocalPersist('kaiscope-goalpose-mode', false)
 
-  // 用于让 LeftPanel 注册添加标签的回调（标签添加到 LeftPanel 的 displays 中）
+  // 用于让 LeftPanel 注册添加/删除标签的回调
   const addImageLabelCallbackRef = useRef(null)
-  // 用于让 LeftPanel 注册删除标签的回调（layout panel 从 image 切换走时调用）
   const removeImageLabelRef = useRef(null)
 
-  const handleToggleControl = () => {
-    setControlMode(v => {
-      const next = !v
-      if (next) setShowJoystickConfig(true)
-      else setShowJoystickConfig(false)
-      return next
-    })
-  }
+  // ToolPanel 点击 "2D GoalPose" 按钮时触发
+  useEffect(() => {
+    const handler = () => setEditorMode(v => !v)
+    window.addEventListener('toolpanel:toggle-editor', handler)
+    return () => window.removeEventListener('toolpanel:toggle-editor', handler)
+  }, [])
 
   const isSingle = countLeaves(layout) === 1
 
@@ -272,7 +270,7 @@ export default function RobotVisualizer({ onBack }) {
 
   const renderPanel = (ptype, pt, panelNode, panelKey) => {
     if (ptype === '3d') {
-      return <Viewport3D key={panelKey || 'main-3d'} panelId={panelKey || 'main-3d'} goalPoseMode={goalPoseMode} onGoalPoseComplete={() => setGoalPoseMode(false)} />
+      return <Viewport3D key={panelKey || 'main-3d'} panelId={panelKey || 'main-3d'} editorMode={editorMode} onEditorComplete={() => setEditorMode(false)} goalposeMode={goalposeMode} onGoalposeComplete={() => setGoalposeMode(false)} />
     }
     if (ptype === 'image') {
       const topic = panelNode?.displayUid ? (imageTopics[panelNode.displayUid] || '') : ''
@@ -304,21 +302,25 @@ export default function RobotVisualizer({ onBack }) {
         onMarkImageLabelInactive={handleMarkImageLabelInactive}
       />
 
-      <VirtualJoystick
-        visible={controlMode}
-        showConfig={showJoystickConfig}
-        onConfigClose={() => setShowJoystickConfig(false)}
+      <ToolPanel
+        visible={toolMode}
+        onClose={() => setToolMode(false)}
+        editorMode={editorMode}
+        onEditorModeChange={setEditorMode}
+        goalposeMode={goalposeMode}
+        onGoalposeModeChange={setGoalposeMode}
+      />
+
+      <EditPanel
+        editorMode={editorMode}
+        onClose={() => setEditorMode(false)}
       />
 
       <TopNav
-        goalPoseMode={goalPoseMode}
-        onToggleGoalPose={() => setGoalPoseMode(v => !v)}
-        controlMode={controlMode}
-        onToggleControl={handleToggleControl}
-        onOpenControlConfig={() => {
-          setControlMode(true)
-          setShowJoystickConfig(true)
-        }}
+        editorMode={editorMode}
+        onToggleEditor={() => setEditorMode(v => !v)}
+        toolMode={toolMode}
+        onToggleTool={() => setToolMode(v => !v)}
         onBack={onBack}
       />
 

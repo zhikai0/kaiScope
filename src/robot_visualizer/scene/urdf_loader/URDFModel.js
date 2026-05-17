@@ -22,17 +22,21 @@ export class URDFModel {
     this._jointNodes = new Map()   // jointName -> THREE.Group (joint pivot)
     this._parsed     = null
     this._loaded     = false
+    this._axisCache  = new Map()   // jointName -> THREE.Vector3 (缓存轴向量)
   }
 
   // ── Public API ───────────────────────────────────────────────────────
 
   async loadFromString(urdfText) {
-    console.log(`[URDFModel] loadFromString called, length=${urdfText?.length}, preview=${urdfText?.slice(0,80)}`)
     this._disposeModel()
 
     await URDFModel._yieldToMainThread()
     this._parsed = await URDFModel._parseWithWorker(urdfText)
-    console.log(`[URDFModel] parsed: robot=${this._parsed.name}, links=${this._parsed.links.size}, joints=${this._parsed.joints.size}`)
+
+    // 预缓存关节轴向量
+    this._parsed.joints.forEach((joint, name) => {
+      this._axisCache.set(name, new THREE.Vector3(joint.axis.x, joint.axis.y, joint.axis.z))
+    })
 
     await URDFModel._yieldToMainThread()
     await this._build()
@@ -40,7 +44,6 @@ export class URDFModel {
     await URDFModel._yieldToMainThread()
     this._parent.add(this._root)
     this._loaded = true
-    console.log(`[URDFModel] Loaded robot: ${this._parsed.name}, root children=${this._root.children.length}`)
   }
 
   /**
@@ -58,9 +61,9 @@ export class URDFModel {
   /** 设置关节角度（弧度） */
   setJointAngle(jointName, angle) {
     const pivot = this._jointNodes.get(jointName)
-    const joint = this._parsed?.joints.get(jointName)
-    if (!pivot || !joint) return
-    const axis = new THREE.Vector3(joint.axis.x, joint.axis.y, joint.axis.z)
+    if (!pivot) return
+    const axis = this._axisCache.get(jointName)
+    if (!axis) return
     pivot.setRotationFromAxisAngle(axis, angle)
   }
 
@@ -70,7 +73,6 @@ export class URDFModel {
 
   async _build() {
     const { links, joints } = this._parsed
-    console.log(`[URDFModel] _build: ${links.size} links, ${joints.size} joints`)
 
     let createdLinks = 0
     for (const [name] of links.entries()) {
@@ -86,8 +88,6 @@ export class URDFModel {
     let rootLinkName = null
     links.forEach((_, name) => { if (!childLinks.has(name)) rootLinkName = name })
     if (!rootLinkName) rootLinkName = links.keys().next().value
-    console.log(`[URDFModel] root link: ${rootLinkName}`)
-
     this._root.add(this._linkNodes.get(rootLinkName))
     this._attachChildren(rootLinkName, joints)
 
@@ -99,9 +99,7 @@ export class URDFModel {
       }
     }
 
-    console.log(`[URDFModel] loading ${visualTasks.length} visuals...`)
     await this._runWithConcurrency(visualTasks, 4)
-    console.log('[URDFModel] all visuals loaded')
   }
 
   _attachChildren(parentLinkName, joints) {
@@ -120,7 +118,7 @@ export class URDFModel {
   }
 
   async _addVisual(linkNode, visual) {
-    const { origin, geometry } = visual
+    const { origin, geometry, material } = visual
     if (!geometry) return
 
     let obj
@@ -136,8 +134,48 @@ export class URDFModel {
     }
     if (!obj) return
 
+    // Apply material from URDF <material> element
+    this._applyMaterial(obj, material)
+
     URDFModel._applyOrigin(obj, origin)
     linkNode.add(obj)
+  }
+
+  _applyMaterial(obj, mat) {
+    if (!mat) return
+
+    const applyToMesh = (mesh) => {
+      if (!mesh.isMesh) return
+      const tex = mat.texture ? this._loadTexture(mat.texture) : null
+      if (tex) {
+        // Lambert 材质 - 匹配 Rviz 的哑光效果
+        mesh.material = new THREE.MeshLambertMaterial({
+          map: tex,
+        })
+      } else if (mat.color) {
+        const { r, g, b, a = 1 } = mat.color
+        mesh.material = new THREE.MeshLambertMaterial({
+          color: new THREE.Color(r, g, b),
+          transparent: a < 1,
+          opacity: a,
+        })
+      }
+    }
+
+    obj.traverse(applyToMesh)
+    if (obj.isMesh) applyToMesh(obj)
+  }
+
+  _loadTexture(filename) {
+    const url = this._meshLoader._resolveUrl(filename)
+    const loader = new THREE.TextureLoader()
+    try {
+      const tex = loader.load(url)
+      tex.colorSpace = THREE.SRGBColorSpace
+      return tex
+    } catch (e) {
+      return null
+    }
   }
 
   async _runWithConcurrency(tasks, maxConcurrency = 4) {
@@ -179,7 +217,6 @@ export class URDFModel {
       worker.terminate()
       return URDFModel._deserializeParsed(payload)
     } catch (e) {
-      console.warn('[URDFModel] worker parse failed, fallback to main thread:', e)
       return URDFParser.parse(urdfText)
     }
   }

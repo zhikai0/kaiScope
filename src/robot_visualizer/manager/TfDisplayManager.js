@@ -87,15 +87,23 @@ export class TfDisplayManager {
     /** @type {boolean} 是否由用户手动指定 fixedFrame */
     this._manualFixedFrame = false
 
+    /** @type {boolean} reset 后待重建标记（下次 TF update 时触发） */
+    this._pendingReset = false
+
     // 绑定 TfManager 更新事件
     this._onTfUpdate = () => {
       // 未手动指定时，持续跟踪 TF 树最高根帧
       if (!this._manualFixedFrame) this._autoSetFixedFrame()
+      // Reset 后第一次 TF 更新：强制重建所有 marker（Viewport3D 已清空场景）
+      if (this._pendingReset) {
+        this._pendingReset = false
+        this._lastSync = 0
+      }
       this._sync()
     }
     getTfManager().on('update', this._onTfUpdate)
 
-    // 场景就绪后再次同步；Reset 不应清空 TF，行为与 RViz 保持一致
+    // 场景就绪后再次同步
     this._onSceneReady = () => {
       this._activeKeys.clear()
       this._activeArrowKeys.clear()
@@ -103,6 +111,14 @@ export class TfDisplayManager {
       this._sync()
     }
     this._unregSceneReady = SceneCommandBus.register('scene:ready', this._onSceneReady)
+
+    // Reset 事件：不清空 marker，由 Viewport3D 处理场景清理
+    // 下一次 TfManager 'update' 到来时会自动重建所有 marker
+    this._unregSceneReset = SceneCommandBus.register('scene:reset', () => {
+      this._activeKeys.clear()
+      this._activeArrowKeys.clear()
+      this._pendingReset = true
+    })
 
     // 首次尝试自动设置根帧
     this._autoSetFixedFrame()
@@ -238,10 +254,27 @@ export class TfDisplayManager {
    * @param {boolean} enabled
    */
   setEnabled(enabled) {
+    const wasEnabled = this.enabled
     this.enabled = enabled
+
     if (!enabled) {
-      this._clearAll()
+      // 只隐藏 marker，不清理 _activeKeys，以便恢复时能正常显示
+      this._activeKeys.forEach(key => {
+        SceneCommandBus.dispatch({ type: 'scene:marker:visible', key, visible: false })
+      })
+      this._activeArrowKeys.forEach(key => {
+        SceneCommandBus.dispatch({ type: 'scene:marker:visible', key, visible: false })
+      })
     } else {
+      // 恢复显示
+      this._activeKeys.forEach(key => {
+        SceneCommandBus.dispatch({ type: 'scene:marker:visible', key, visible: true })
+      })
+      this._activeArrowKeys.forEach(key => {
+        SceneCommandBus.dispatch({ type: 'scene:marker:visible', key, visible: true })
+      })
+      // 立即同步确保 marker 重建
+      this._lastSync = 0
       this._sync()
     }
     this._save()
@@ -253,6 +286,7 @@ export class TfDisplayManager {
   destroy() {
     getTfManager().off('update', this._onTfUpdate)
     if (this._unregSceneReady) this._unregSceneReady()
+    if (this._unregSceneReset) this._unregSceneReset()
     this._fixedFrameListeners.clear()
     this._clearAll()
   }
@@ -279,14 +313,6 @@ export class TfDisplayManager {
       return
     }
 
-    if (!this.settings.showAxes) {
-      // 仅清除 axes，保留 arrows（如有）
-      this._activeKeys.forEach(key => {
-        SceneCommandBus.dispatch({ type: 'scene:marker:remove', key })
-      })
-      this._activeKeys.clear()
-    }
-
     // 节流：10Hz，避免 TF 高频更新导致每帧重建 marker
     const now = Date.now()
     if (this._lastSync && now - this._lastSync < 100) return
@@ -299,9 +325,8 @@ export class TfDisplayManager {
     const wantedArrowKeys = new Set()
 
     // ── 第一遍：计算所有 frame 的绝对位姿，填充 framePositions
-    // 必须在 showAxes 判断之外，确保 arrow 也能拿到位置数据
-    const framePositions = new Map()  // frameName -> {x, y, z}
-    const framePoses     = new Map()  // frameName -> { translation, rotation }
+    const framePositions = new Map()
+    const framePoses     = new Map()
 
     tfTree.forEach((_node, frameName) => {
       if (!this.settings.allEnabled) return
@@ -323,15 +348,10 @@ export class TfDisplayManager {
     })
 
     // ── 第二遍：根据位姿数据创建/更新 Axes markers
-    framePoses.forEach(({ translation, rotation }, frameName) => {
-      if (this.settings.showAxes) {
+    if (this.settings.showAxes) {
+      framePoses.forEach(({ translation, rotation }, frameName) => {
         const key = `tf_axes_${frameName}`
         wantedKeys.add(key)
-
-        const poseMsg = {
-          position:    { x: translation.x, y: translation.y, z: translation.z },
-          orientation: { x: rotation.x,    y: rotation.y,    z: rotation.z,    w: rotation.w ?? 1 },
-        }
 
         if (!this._activeKeys.has(key)) {
           SceneCommandBus.dispatch({
@@ -347,6 +367,8 @@ export class TfDisplayManager {
             },
           })
           this._activeKeys.add(key)
+          // 立即注册到平滑跟随系统，不用 setTimeout（避免 reset 时序问题）
+          SceneCommandBus.dispatch({ type: 'scene:tfMarker:register', key, frameName })
         } else {
           SceneCommandBus.dispatch({
             type:    'scene:marker:labelVisible',
@@ -354,14 +376,8 @@ export class TfDisplayManager {
             visible: this.settings.showNames,
           })
         }
-
-        SceneCommandBus.dispatch({
-          type: 'scene:marker:update',
-          key,
-          data: poseMsg,
-        })
-      }
-    })
+      })
+    }
 
     // ── Arrow markers（子 → 父）──────────────────────────────────────
     if (this.settings.showArrows) {

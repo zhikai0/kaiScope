@@ -240,7 +240,6 @@ export class DisplayManager extends EventBus {
         }
         // ── RobotModel rendering pipeline ────────────────────────────
         if (disp.id === 'robotmodel') {
-          console.log(`[DisplayManager] robotmodel msg received, uid=${disp.uid}, type=${typeof msg}, keys=${Object.keys(msg||{}).join(',')}`)
           this._handleRobotModelMsg(msg, disp)
         }
       })
@@ -269,7 +268,6 @@ export class DisplayManager extends EventBus {
   _handleRobotModelMsg(msg, disp) {
     // std_msgs/String: msg.data 是字符串
     const urdfText = typeof msg === 'string' ? msg : (msg?.data ?? '')
-    console.log(`[DisplayManager] _handleRobotModelMsg: urdfText length=${urdfText?.length}, hasRobot=${urdfText?.includes('<robot')}`)
     if (!urdfText || !urdfText.includes('<robot')) return
 
     this._lastRobotModel.set(disp.uid, urdfText)
@@ -368,24 +366,24 @@ export class DisplayManager extends EventBus {
 
     if (!points.length) return
 
-    // 确保 marker 已创建
-    SceneCommandBus.dispatch({
-      type:       'scene:marker:set',
-      markerType: 'path',
-      key,
-      rosMsgType: '__preprocessed__',
-      options: {
-        color:     disp.params?.color     || '#19ff00',
-        alpha:     disp.params?.alpha     ?? 1,
-        lineStyle: disp.params?.lineStyle || 'solid',
-      },
-    })
+    // 获取 markerManager 实例来判断 marker 是否已存在
+    // 通过 SceneCommandBus 查询 marker 是否存在
+    const markerStyle = {
+      color:     disp.params?.color     || '#19ff00',
+      alpha:     disp.params?.alpha     ?? 1,
+      lineStyle: disp.params?.lineStyle || 'solid',
+    }
 
-    // 更新路径数据
+    // 发送 scene:path:update 命令，让 Viewport3D 处理 marker 创建/样式更新/数据更新
+    // Viewport3D 会判断 marker 是否已存在，只在需要时创建；样式变化时使用 setStyle 更新
     SceneCommandBus.dispatch({
-      type: 'scene:marker:update',
+      type:      'scene:path:update',
+      uid:       disp.uid,
       key,
-      data: { points },
+      points,
+      color:     markerStyle.color,
+      alpha:     markerStyle.alpha,
+      lineStyle: markerStyle.lineStyle,
     })
   }
 }

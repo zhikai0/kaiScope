@@ -24,6 +24,20 @@ export class URDFParser {
     const links  = new Map()
     const joints = new Map()
 
+    // ── 全局 material 定义收集 ──────────────────────────────────────────
+    // key: material name, value: { texture, color }
+    const globalMaterials = new Map()
+    Array.from(robot.children).filter(el => el.tagName === 'material').forEach(el => {
+      const matName = el.getAttribute('name')
+      if (matName) {
+        globalMaterials.set(matName, {
+          name:    matName,
+          texture: el.querySelector('texture')?.getAttribute('filename') || null,
+          color:   URDFParser._parseColor(el.querySelector('color')),
+        })
+      }
+    })
+
     // ── Links — 只取 robot 直接子元素 ─────────────────────────────────
     Array.from(robot.children).filter(el => el.tagName === 'link').forEach(el => {
       const linkName = el.getAttribute('name')
@@ -33,12 +47,26 @@ export class URDFParser {
         const origin   = URDFParser._parseOrigin(vis.querySelector('origin'))
         const geomEl   = vis.querySelector('geometry')
         const geometry = URDFParser._parseGeometry(geomEl)
-        const matEl    = vis.querySelector('material')
-        const material = matEl ? {
-          name:    matEl.getAttribute('name') || '',
-          texture: matEl.querySelector('texture')?.getAttribute('filename') || null,
-          color:   URDFParser._parseColor(matEl.querySelector('color')),
-        } : null
+
+        // Material: 优先用 visual 内联定义，否则用 name 查找全局定义
+        const matEl = vis.querySelector('material')
+        let material = null
+        if (matEl) {
+          const inlineTexture = matEl.querySelector('texture')?.getAttribute('filename') || null
+          const inlineColor   = URDFParser._parseColor(matEl.querySelector('color'))
+          if (inlineTexture || inlineColor) {
+            // 内联定义优先
+            material = {
+              name:    matEl.getAttribute('name') || '',
+              texture: inlineTexture,
+              color:   inlineColor,
+            }
+          } else {
+            // 通过 name 查找全局定义
+            const matName = matEl.getAttribute('name')
+            if (matName) material = globalMaterials.get(matName) || null
+          }
+        }
 
         if (geometry) visuals.push({ origin, geometry, material })
       })

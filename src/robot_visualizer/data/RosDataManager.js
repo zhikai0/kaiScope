@@ -187,9 +187,9 @@ export class RosDataManager extends EventTarget {
     if (this._autoSubscribeTFEnabled) {
       if (this.conn.isConnected) this._autoSubscribeTF()
     } else {
+      // 只取消订阅，保留 TfManager 中的旧数据（供 Global Options Fixed Frame 显示）
       this._forceUnsubscribeTopic('/tf')
       this._forceUnsubscribeTopic('/tf_static')
-      this._clearTFData()
     }
   }
 
@@ -235,10 +235,8 @@ export class RosDataManager extends EventTarget {
       const msgDef = parse(ch?.schema || TWIST_SCHEMA_FALLBACK, { ros2: true })
       this._cmdVelWriter  = new MessageWriter(msgDef)
       this._cmdVelChanId  = chanId
-      console.log('[RosDataManager] cmd_vel ready, chanId=', chanId, ch?.topic ? `schema from topic: ${ch.topic}` : 'schema from fallback')
       this._sendCmdVelCdr(linear, angular)
     } catch(e) {
-      console.warn('[RosDataManager] cmd_vel setup error', e)
     }
   }
 
@@ -250,10 +248,8 @@ export class RosDataManager extends EventTarget {
     try {
       // MessageWriter.writeMessage() 已包含 CDR encapsulation header，直接发送即可
       const payload = this._cmdVelWriter.writeMessage(message)
-      console.log('[RosDataManager] payload bytes:', Array.from(payload.slice(0, 20)).map(b => b.toString(16).padStart(2,'0')).join(' '))
       this.conn.sendMessage(this._cmdVelChanId, payload)
     } catch(e) {
-      console.warn('[RosDataManager] _sendCmdVelCdr error', e)
     }
   }
 
@@ -282,10 +278,8 @@ export class RosDataManager extends EventTarget {
       const msgDef = parse(ch?.schema || POSE_STAMPED_SCHEMA_FALLBACK, { ros2: true })
       this._goalPoseWriter = new MessageWriter(msgDef)
       this._goalPoseChanId = chanId
-      console.log('[RosDataManager] goal_pose ready, chanId=', chanId, ch?.topic ? `schema from topic: ${ch.topic}` : 'schema from fallback')
       this._sendGoalPoseCdr({ x, y, yaw, frameId })
     } catch (e) {
-      console.warn('[RosDataManager] goal_pose setup error', e)
     }
   }
 
@@ -312,8 +306,63 @@ export class RosDataManager extends EventTarget {
       const payload = this._goalPoseWriter.writeMessage(message)
       this.conn.sendMessage(this._goalPoseChanId, payload)
     } catch (e) {
-      console.warn('[RosDataManager] _sendGoalPoseCdr error', e)
     }
+  }
+
+  // ── Generic publisher (CDR + user-supplied ROS2 msg schema) ───────────────
+  // Cache writers per topic to avoid re-parsing on every publish
+  // Entry: { chanId, writer, schema }
+  _genericPublishers = new Map()
+
+  /**
+   * Publish a user-defined ROS2 message via CDR encoding.
+   * @param {string} topic
+   * @param {string} schemaName  e.g. 'nav_msgs/msg/Path'
+   * @param {string} schema      ROS2 .msg definition (same format as RosDataManager.js line 11-45)
+   * @param {object} data        Plain JS object matching the schema
+   */
+  publishGenericCdr(topic, schemaName, schema, data) {
+    if (this.conn?.ws?.readyState !== WebSocket.OPEN) return
+
+    let entry = this._genericPublishers.get(topic)
+    if (entry && entry.schema === schema) {
+      this._sendGenericCdr(entry, data)
+      return
+    }
+
+    const chanId = this.conn.advertise({
+      topic,
+      encoding: 'cdr',
+      schemaName,
+    })
+    if (!chanId) return
+
+    try {
+      const msgDef = parse(schema, { ros2: true })
+      const writer = new MessageWriter(msgDef)
+      entry = { chanId, writer, schema }
+      this._genericPublishers.set(topic, entry)
+      this._sendGenericCdr(entry, data)
+    } catch (e) {
+    }
+  }
+
+  _sendGenericCdr(entry, data) {
+    try {
+      const payload = entry.writer.writeMessage(data)
+      this.conn.sendMessage(entry.chanId, payload)
+    } catch (e) {
+    }
+  }
+
+  /**
+   * Unadvertise a generic topic and drop its writer.
+   */
+  releaseGenericPublisher(topic) {
+    const entry = this._genericPublishers.get(topic)
+    if (!entry) return
+    this.conn.unadvertise(entry.chanId)
+    this._genericPublishers.delete(topic)
   }
 
   // ── Internal: subscribe/unsubscribe wire ──────────────────────────────
@@ -456,7 +505,6 @@ export class RosDataManager extends EventTarget {
       this._readers.set(ch.id, reader)
       return reader
     } catch (e) {
-      console.warn('[RosDataManager] failed to build MessageReader for', ch.topic, e)
       return null
     }
   }
@@ -477,10 +525,9 @@ export class RosDataManager extends EventTarget {
         msg = data
       }
       listeners.forEach(fn => {
-        try { fn(msg, topic) } catch (e) { console.error('[RosDataManager] listener error', e) }
+        try { fn(msg, topic) } catch (e) { /* silent */ }
       })
     } catch (e) {
-      console.warn('[RosDataManager] parse error', topic, e)
     }
   }
 

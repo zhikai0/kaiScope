@@ -12,6 +12,7 @@ import { MapLayer } from './map/MapLayer'
 import { getTfManager } from '../data/TfManager'
 import { getRosDataManager } from '../data/getRosDataManager'
 import { getTfDisplayManager } from '../manager/TfDisplayManager'
+import { createSmoothFollowState, updateSmoothFollow, calcAlpha } from '../utils/interpolation.js'
 import './Viewport3D.css'
 
 const VIEWPORT_KEY_PREFIX = 'kaiscope-viewport-'
@@ -37,12 +38,13 @@ function saveViewportState(panelId, state) {
   } catch {}
 }
 
-export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, onGoalPoseComplete }) {
+export default function Viewport3D({ panelId = 'main-3d', editorMode = false, onEditorComplete, goalposeMode = false, onGoalposeComplete }) {
   const wrapRef = useRef(null)
   const mountRef = useRef(null)
   const refs     = useRef({})
   const persistedState = useRef(loadViewportState(panelId))
   const [viewMode, setViewMode] = useState(persistedState.current.viewMode || 'orbit')
+  const prevEditorModeRef = useRef(false)
 
   const trajectory    = useSimStore(s => s.trajectory)
   const historyPath   = useSimStore(s => s.historyPath)
@@ -63,11 +65,11 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(el.clientWidth, el.clientHeight)
-    renderer.setClearColor(0x303030)
+    renderer.setClearColor(0x202025)
     renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFShadowMap
+    renderer.shadowMap.type = THREE.BasicShadowMap
     renderer.outputColorSpace = THREE.SRGBColorSpace
-    renderer.toneMapping = THREE.LinearToneMapping
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.0
     el.appendChild(renderer.domElement)
 
@@ -100,24 +102,26 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
       controls.update()
     }
 
-    // Lights
-    scene.add(new THREE.AmbientLight(0xdde8ff, 1.0))
-    scene.add(new THREE.HemisphereLight(0xe8f0ff, 0xd0d8f0, 0.6))
-    const sun = new THREE.DirectionalLight(0xffffff, 2.2)
-    sun.position.set(12, 24, 10)
+    // Lights — Rviz 风格科技感
+    scene.add(new THREE.AmbientLight(0x333333, 1.0))
+    scene.add(new THREE.HemisphereLight(0xd0d8e8, 0x404040, 0.3))
+    // 主光源 - 较强，产生清晰光影
+    const sun = new THREE.DirectionalLight(0xffffff, 1.8)
+    sun.position.set(8, 20, 12)
     sun.castShadow = true
-    sun.shadow.mapSize.set(2048, 2048)
+    sun.shadow.mapSize.set(1024, 1024)
     sun.shadow.camera.near = 0.5
     sun.shadow.camera.far = 100
     sun.shadow.camera.left = -22
     sun.shadow.camera.right = 22
     sun.shadow.camera.top = 22
     sun.shadow.camera.bottom = -22
-    sun.shadow.radius = 4
+    sun.shadow.radius = 0
     sun.shadow.bias = -0.0005
     scene.add(sun)
-    const fillLight = new THREE.DirectionalLight(0xaac8ff, 0.5)
-    fillLight.position.set(-8, 10, -10)
+    // 补光 - 冷色调，增加科技感
+    const fillLight = new THREE.DirectionalLight(0xa0c0ff, 0.4)
+    fillLight.position.set(-10, 15, -8)
     scene.add(fillLight)
 
     // ── MapLayer 组件（9宫格地图贴图管理，替代旧 ground mesh） ────────
@@ -135,12 +139,13 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
     // ── ROS 根节点（Z-up → Y-up 坐标系变换） ─────────────────────────
     const rosRoot = createRosRoot(scene)
 
-    // 路径 / 历史轨迹 group（保留，用于 path display）
+    // 路径 / 历史轨迹 / 编辑路径 group
     const trajGroup = new THREE.Group()
     const histGroup = new THREE.Group()
+    const editPathGroup = new THREE.Group()
     const importedGroup = new THREE.Group()
     importedGroup.name = 'importers'
-    rosRoot.add(trajGroup, histGroup, importedGroup)
+    rosRoot.add(trajGroup, histGroup, editPathGroup, importedGroup)
 
     // ── Marker 管理器（挂在 rosRoot 下，自动享受坐标系变换） ──────────
     const markerManager = new MarkerManager(rosRoot)
@@ -310,7 +315,7 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
       })
     }
 
-    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, importedGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot }
+    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, editPathGroup, importedGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot, _tfSmoothFollow: new Map(), _jointSmooth: new Map() }
     const importedAssetStore = getImportedAssetStore()
     syncImportedAssets(importedAssetStore.getAssets())
     const unsubscribeImportedAssets = importedAssetStore.onChange(syncImportedAssets)
@@ -355,20 +360,52 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
         rr.getWorldPosition(p)
         refs.current.mapLayer.tick({ x: p.x, y: -p.z })  // Three.js Z-up→Y: rosRoot z=-y
       }
-      // ── URDF 模型跟随 base_link TF 绝对位姿 ─────────────────────────
-      // URDFModel._root 挂在 rosRoot 下，直接用 ROS 坐标值，rosRoot 负责坐标系变换
+      // ── URDF 模型 + TF Marker 同步跟随 ───────────────────────────
+      // URDF 模型直接跟随
       const urdfModels = refs.current._urdfModels
       if (urdfModels && urdfModels.size > 0) {
-        const tfMgr      = getTfManager()
-        const fixedFrame = getTfDisplayManager().fixedFrame || 'map'
         urdfModels.forEach((model) => {
           if (!model.isLoaded) return
           const tf = tfMgr.lookupTransform(fixedFrame, 'base_link')
           if (!tf) return
-          const { translation: t, rotation: q } = tf
-          // 直接用 ROS 原始值（rosRoot 已做 Z-up→Y-up 变换）
-          model._root.position.set(t.x, t.y, t.z)
-          model._root.quaternion.set(q.x, q.y, q.z, q.w)
+          model._root.position.set(tf.translation.x, tf.translation.y, tf.translation.z)
+          model._root.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w ?? 1)
+        })
+      }
+
+      // TF Marker 平滑插值（唯一用 lerp 的地方）
+      const tfSmoothFollow = refs.current._tfSmoothFollow
+      if (tfSmoothFollow && tfSmoothFollow.size > 0) {
+        const alpha = calcAlpha(60, dt)
+        tfSmoothFollow.forEach((state, key) => {
+          const frameName = key.replace(/^tf_(axes|arrow|text)_/, '')
+          const tf = tfMgr.lookupTransform(fixedFrame, frameName)
+          if (!tf) return
+          state.targetPos.set(tf.translation.x, tf.translation.y, tf.translation.z)
+          state.targetQuat.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w ?? 1)
+          state.pos.lerp(state.targetPos, alpha)
+          state.quat.slerp(state.targetQuat, alpha)
+          const marker = refs.current.markerManager?.get(key)
+          if (marker?.root) {
+            marker.root.position.copy(state.pos)
+            marker.root.quaternion.copy(state.quat)
+          }
+        })
+      }
+
+      // ── 关节角度平滑插值 ─────────────────────────────────────────
+      const jointSmooth = refs.current._jointSmooth
+      if (jointSmooth && jointSmooth.size > 0) {
+        const urdfModels = refs.current._urdfModels
+        const alpha = calcAlpha(60, dt)
+        jointSmooth.forEach((state, jointKey) => {
+          let diff = state.target - state.current
+          while (diff > Math.PI) diff -= Math.PI * 2
+          while (diff < -Math.PI) diff += Math.PI * 2
+          state.current += diff * alpha
+          urdfModels?.forEach((model) => {
+            model.setJointAngle(jointKey, state.current)
+          })
         })
       }
       renderer.render(scene, camera)
@@ -452,8 +489,8 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
         const id = uid.replace(/-\d+$/, '')
         const r  = refs.current
         if (id === 'grid')       { if (r.gridMaj) r.gridMaj.visible = visible }
-        else if (id === 'path')  { if (r.trajGroup)  r.trajGroup.visible  = visible }
-        else if (id === 'history'){ if (r.histGroup)  r.histGroup.visible  = visible }
+        else if (id === 'path')  { r.markerManager?.get('trajectory')?.setVisible?.(visible) }
+        else if (id === 'history'){ r.markerManager?.get('history')?.setVisible?.(visible) }
         else if (id === 'robotmodel') {
           r._urdfModels?.forEach(model => {
             if (model._root) model._root.visible = visible
@@ -499,17 +536,95 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
         refs.current.markerManager?.get(key)?.setStyle?.({ alpha })
       }),
 
+      // ── 编辑路径实时预览 — 通过 PathMarker (lineStyle='pointlines') 渲染 ─────
+      SceneCommandBus.register('scene:editpath:update', ({ points = [], previewPts = [], p1, p2 }) => {
+        const { markerManager, editPathGroup } = refs.current
+        if (!markerManager || !editPathGroup) return
+
+        const PREVIEW_KEY  = 'editpath_preview'
+        const ACCUM_KEY    = 'editpath_accum'
+
+        const Z = 0.05
+
+        // ── 端点 p1/p2：亮红小球（marker 系统管不了这种独立小球，直接加 mesh）──
+        editPathGroup.traverse(obj => {
+          if (obj.userData?.isEditEndpoint) {
+            obj.geometry?.dispose()
+            obj.material?.dispose()
+          }
+        })
+        editPathGroup.clear()
+        const endSphereGeo = new THREE.SphereGeometry(0.12, 8, 6)
+        const endSphereMat = new THREE.MeshBasicMaterial({ color: 0xff2222 })
+        const mkEndpoint = (x, y) => {
+          const m = new THREE.Mesh(endSphereGeo, endSphereMat)
+          m.position.set(x, y, Z)
+          m.userData.isEditEndpoint = true
+          editPathGroup.add(m)
+        }
+        if (p1) mkEndpoint(p1.x, p1.y)
+        if (p2) mkEndpoint(p2.x, p2.y)
+
+        // ── 已完成路径：绿色 tube + 红球（lineStyle='pointlines'）───────────────
+        if (points.length >= 1) {
+          const pts = points.map(p => ({ x: p.x, y: p.y, z: 0 }))
+          if (!markerManager.get(ACCUM_KEY)) {
+            markerManager.set(ACCUM_KEY, 'path', '__preprocessed__', {
+              color:      '#22ff66',
+              alpha:      1.0,
+              lineStyle:  'pointlines',
+              lineWidth:  0.025,
+              pointSize:  0.08,
+              pointColor: '#ff2222',
+            })
+          }
+          markerManager.update(ACCUM_KEY, { points: pts })
+        } else {
+          markerManager.remove(ACCUM_KEY)
+        }
+
+        // ── 预览曲线：蓝色 tube + 红球（lineStyle='pointlines'）───────────────
+        if (previewPts.length >= 2) {
+          const pts = previewPts.map(p => ({ x: p.x, y: p.y, z: 0 }))
+          if (!markerManager.get(PREVIEW_KEY)) {
+            markerManager.set(PREVIEW_KEY, 'path', '__preprocessed__', {
+              color:      '#44aaff',
+              alpha:      1.0,
+              lineStyle:  'pointlines',
+              lineWidth:  0.025,
+              pointSize:  0.08,
+              pointColor: '#ff2222',
+            })
+          }
+          markerManager.update(PREVIEW_KEY, { points: pts })
+        } else {
+          markerManager.remove(PREVIEW_KEY)
+        }
+      }),
+
       // ── Marker 系统 ─────────────────────────────────────────────────
       SceneCommandBus.register('scene:reset', () => {
-        console.log('[Viewport3D] scene:reset triggered')
-        // 1. Clear non-TF markers，保留静态/动态 TF marker（与 RViz 行为一致）
+        // 1. Clear non-TF markers
         refs.current.markerManager?.dispose?.((key) => !String(key).startsWith('tf_'))
-        
-        // 2. Clear built-in groups
+
+        // 2. Clear ALL TF markers（会通过 TfManager 'update' 事件自动重建）
+        // 获取 markerManager 中所有 TF markers 的 key
+        const mgr = refs.current.markerManager
+        if (mgr?._markers) {
+          for (const key of mgr._markers.keys()) {
+            if (String(key).startsWith('tf_')) {
+              mgr.remove(key)
+            }
+          }
+        }
+        refs.current._tfSmoothFollow?.clear()
+
+        // 3. Clear built-in groups
         if (refs.current.trajGroup) refs.current.trajGroup.clear()
         if (refs.current.histGroup) refs.current.histGroup.clear()
+        if (refs.current.editPathGroup) refs.current.editPathGroup.clear()
 
-        // 3. Clear URDF models
+        // 4. Clear URDF models
         if (refs.current._urdfModels) {
           refs.current._urdfModels.forEach(m => m.dispose())
           refs.current._urdfModels.clear()
@@ -518,7 +633,7 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
         if (refs.current._urdfInflight) refs.current._urdfInflight.clear()
         if (refs.current._urdfLoadSeq) refs.current._urdfLoadSeq.clear()
 
-        // 4. Keep current camera/view mode
+        // 5. Keep current camera/view mode
       }),
 
       // 创建 Marker：{ type, key, rosMsgType, options }
@@ -539,9 +654,27 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
         refs.current.markerManager?.update(key, data)
       }),
 
-      // 移除 Marker：{ key }
+      // 注册 TF marker 进行平滑跟随：{ key, frameName }
+      SceneCommandBus.register('scene:tfMarker:register', ({ key, frameName }) => {
+        if (!refs.current._tfSmoothFollow) refs.current._tfSmoothFollow = new Map()
+        const marker = refs.current.markerManager?.get(key)
+        if (marker?.root) {
+          // 初始化位置到当前 TF 位置
+          const tfMgr      = getTfManager()
+          const fixedFrame = getTfDisplayManager().fixedFrame || 'map'
+          const tf = tfMgr.lookupTransform(fixedFrame, frameName)
+          if (tf) {
+            marker.root.position.set(tf.translation.x, tf.translation.y, tf.translation.z)
+            marker.root.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w ?? 1)
+          }
+          refs.current._tfSmoothFollow.set(key, createSmoothFollowState(marker.root.position, marker.root.quaternion))
+        }
+      }),
+
+      // 移除 TF marker：{ key }
       SceneCommandBus.register('scene:marker:remove', ({ key }) => {
         refs.current.markerManager?.remove(key)
+        refs.current._tfSmoothFollow?.delete(key)
       }),
 
       // 显示/隐藏 Marker：{ key, visible }
@@ -600,9 +733,8 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
 
       // ── URDF 模型加载/销毁 ────────────────────────────────────────
       SceneCommandBus.register('scene:urdf:load', async ({ uid, urdfText }) => {
-        console.log(`[Viewport3D] scene:urdf:load uid=${uid}, urdfText length=${urdfText?.length}`)
         const { rosRoot } = refs.current
-        if (!rosRoot) { console.error('[Viewport3D] rosRoot not available'); return }
+        if (!rosRoot) return
 
         // 缓存检查：相同 urdfText 不重复加载
         if (!refs.current._urdfCache) refs.current._urdfCache = new Map()
@@ -611,13 +743,11 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
 
         const cacheKey = `${urdfText?.length}:${urdfText?.slice(0, 100)}`
         if (refs.current._urdfCache.get(uid) === cacheKey && refs.current._urdfModels?.get(uid)?.isLoaded) {
-          console.log(`[Viewport3D] URDF cache hit for uid=${uid}, skip reload`)
           return
         }
 
         const inflight = refs.current._urdfInflight.get(uid)
         if (inflight?.cacheKey === cacheKey) {
-          console.log(`[Viewport3D] URDF load in-flight for uid=${uid}, skip duplicate request`)
           return
         }
 
@@ -628,7 +758,7 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
         const { URDFModel } = await import('./urdf_loader/index.js')
         if (!refs.current._urdfModels) refs.current._urdfModels = new Map()
         const existing = refs.current._urdfModels.get(uid)
-        if (existing) { console.log('[Viewport3D] disposing existing URDFModel'); existing.dispose() }
+        if (existing) existing.dispose()
 
         const model = new URDFModel(rosRoot)
         refs.current._urdfModels.set(uid, model)
@@ -638,16 +768,33 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
 
           const latestSeq = refs.current._urdfLoadSeq.get(uid)
           if (latestSeq !== nextSeq) {
-            console.log(`[Viewport3D] stale URDF load result discarded uid=${uid}, seq=${nextSeq}, latest=${latestSeq}`)
             model.dispose()
             if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
             return
           }
 
           refs.current._urdfCache.set(uid, cacheKey)
-          console.log(`[Viewport3D] URDF loaded for uid=${uid}`)
+
+          // ── 订阅 /joint_states 驱动车轮 ──────────────────────────────
+          // 在 scene:ready 之后才能拿到 RosDataManager，所以用 setTimeout 延迟订阅
+          setTimeout(() => {
+            const rdm = getRosDataManager()
+            if (!rdm) return
+            rdm.subscribe('/joint_states', (msg) => {
+              if (!msg?.name || !msg?.position) return
+              // 设置目标角度，由动画循环进行平滑插值
+              msg.name.forEach((jointName, i) => {
+                if (!refs.current._jointSmooth) refs.current._jointSmooth = new Map()
+                let state = refs.current._jointSmooth.get(jointName)
+                if (!state) {
+                  state = { current: msg.position[i], target: msg.position[i] }
+                  refs.current._jointSmooth.set(jointName, state)
+                }
+                state.target = msg.position[i]
+              })
+            })
+          }, 100)
         } catch (e) {
-          console.error('[Viewport3D] URDF load failed:', e)
           if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
         } finally {
           const pending = refs.current._urdfInflight.get(uid)
@@ -676,6 +823,7 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
       if (animId) cancelAnimationFrame(animId)
       ro.disconnect()
       cleanupImportedCloudDrop()
+      refs.current.editPathGroup?.clear()
       unregs.forEach(fn => fn())
       refs.current.markerManager?.dispose()
       refs.current.mapLayer?.dispose()
@@ -740,7 +888,20 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
     }
   }, [viewMode])
 
+  // ── Edit mode: top-down + controls disabled ───────────────────────────
+  useEffect(() => {
+    const wasEditing = prevEditorModeRef.current
+    prevEditorModeRef.current = editorMode
+
+    if (editorMode && !wasEditing) {
+      setViewMode('topdown')
+    }
+  }, [editorMode])
+
   // ── 2D Goal Pose interaction ────────────────────────────────────────
+  // 所有状态通过 window.__tp_goalposeMode / __ep_editMode 同步，
+  // effect 只注册一次（空依赖），handlers 永远读最新值。
+  // controls/cursor 由 onGoalposeChange 统一管理。
   useEffect(() => {
     const { renderer, camera, rosRoot, controls } = refs.current
     if (!renderer || !camera || !rosRoot || !controls) return
@@ -750,9 +911,10 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
     const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
     const mouse = new THREE.Vector2()
 
+    // 模块级变量，不被闭包捕获
     let dragging = false
     let startRos = null
-    const prevControlsEnabled = controls.enabled
+    let prevControlsEnabled = true
 
     const toRosGround = (ev) => {
       const rect = dom.getBoundingClientRect()
@@ -768,145 +930,220 @@ export default function Viewport3D({ panelId = 'main-3d', goalPoseMode = false, 
       const dir = toRos.clone().sub(fromRos)
       if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0)
       dir.normalize()
-
-      // 固定尺寸：箭身 2m + 箭头 0.5m
       const fixedShaftLength = 2.0
       const fixedHeadLength = 0.5
       const fixedTip = fromRos.clone().add(dir.multiplyScalar(fixedShaftLength + fixedHeadLength))
-
-      // 可独立调节：箭身半径 / 箭头半径 / 箭头长度
-      const shaftRadius = 0.1
-      const headRadius = 0.2
-
-      SceneCommandBus.dispatch({
-        type: 'scene:marker:set',
-        markerType: 'arrow',
-        key: '__goal_pose_preview__',
-        rosMsgType: '__arrow__',
-        options: {
-          scale: 1.0,
-          shaftColor: '#19ff00',
-          headColor: '#19ff00',
-          opacity: 1.0,
-          fixedShaftLength,
-          fixedHeadLength,
-          shaftRadius,
-          headRadius,
-          headLength: fixedHeadLength,
-        },
-      })
-      SceneCommandBus.dispatch({
-        type: 'scene:marker:update',
-        key: '__goal_pose_preview__',
-        data: {
-          childPos: { x: fromRos.x, y: fromRos.y, z: 0.02 },
-          parentPos: { x: fixedTip.x, y: fixedTip.y, z: 0.02 },
-        },
-      })
+      SceneCommandBus.dispatch({ type: 'scene:marker:set', markerType: 'arrow', key: '__goal_pose_preview__', rosMsgType: '__arrow__', options: { scale: 1.0, shaftColor: '#19ff00', headColor: '#19ff00', opacity: 1.0, fixedShaftLength, fixedHeadLength, shaftRadius: 0.1, headRadius: 0.2, headLength: fixedHeadLength } })
+      SceneCommandBus.dispatch({ type: 'scene:marker:update', key: '__goal_pose_preview__', data: { childPos: { x: fromRos.x, y: fromRos.y, z: 0.02 }, parentPos: { x: fixedTip.x, y: fixedTip.y, z: 0.02 } } })
     }
 
     const cleanupPreview = () => {
+      dragging = false
+      startRos = null
       SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: '__goal_pose_preview__' })
     }
 
     const onDown = (ev) => {
-      if (!goalPoseMode) return
+      if (!window.__tp_goalposeMode || window.__ep_editMode) return
       ev.preventDefault()
       ev.stopPropagation()
       const p = toRosGround(ev)
       if (!p) return
       dragging = true
       startRos = p
+      prevControlsEnabled = controls.enabled
+      controls.enabled = false
       updateDragPreview(startRos, startRos.clone().add(new THREE.Vector3(0.001, 0, 0)))
     }
 
     const onMove = (ev) => {
-      if (!goalPoseMode) return
+      if (!dragging || !startRos) return
       ev.preventDefault()
+      ev.stopPropagation()
       const p = toRosGround(ev)
       if (!p) return
-
-      if (dragging && startRos) {
-        updateDragPreview(startRos, p)
-      }
+      updateDragPreview(startRos, p)
     }
 
     const onUp = (ev) => {
-      if (!goalPoseMode || !dragging || !startRos) return
+      if (!dragging || !startRos) return
       ev.preventDefault()
       ev.stopPropagation()
       const end = toRosGround(ev) || startRos
       const dx = end.x - startRos.x
       const dy = end.y - startRos.y
       const yaw = Math.atan2(dy, dx)
-
-      getRosDataManager()?.publishGoalPose?.({
-        x: startRos.x,
-        y: startRos.y,
-        yaw,
-        frameId: getTfDisplayManager().fixedFrame || 'map',
-      })
-
-      SceneCommandBus.dispatch({
-        type: 'scene:goalpose:commit',
-        pose: { x: startRos.x, y: startRos.y, yaw },
-      })
-
-      dragging = false
-      startRos = null
-      SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: '__goal_pose_preview__' })
-      controls.enabled = prevControlsEnabled
-      dom.style.cursor = ''
-      onGoalPoseComplete?.()
-    }
-
-    if (goalPoseMode) {
-      controls.enabled = false
-      dom.style.cursor = 'crosshair'
-      dom.addEventListener('pointerdown', onDown)
-      dom.addEventListener('pointermove', onMove)
-      window.addEventListener('pointerup', onUp)
-    } else {
-      controls.enabled = prevControlsEnabled
-      dom.style.cursor = ''
+      getRosDataManager()?.publishGoalPose?.({ x: startRos.x, y: startRos.y, yaw, frameId: getTfDisplayManager().fixedFrame || 'map' })
+      SceneCommandBus.dispatch({ type: 'scene:goalpose:commit', pose: { x: startRos.x, y: startRos.y, yaw } })
       cleanupPreview()
-      getRosDataManager()?.releaseGoalPosePublisher?.()
+      controls.enabled = prevControlsEnabled
+      dom.style.cursor = ''
+      window.__tp_goalposeMode = false
+      window.dispatchEvent(new CustomEvent('toolpanel:goalposemodechange'))
+      // 触发 React state 重置，打破 ToolPanel useEffect 的循环
+      onGoalposeComplete?.()
     }
+
+    // controls/cursor 由事件驱动，不依赖 effect 重跑
+    const onGoalposeChange = () => {
+      if (window.__tp_goalposeMode && !window.__ep_editMode) {
+        controls.enabled = false
+        dom.style.cursor = 'crosshair'
+      } else {
+        cleanupPreview()
+        controls.enabled = true
+        dom.style.cursor = ''
+      }
+    }
+
+    window.addEventListener('toolpanel:goalposemodechange', onGoalposeChange)
+    window.addEventListener('toolpanel:editmodechange', onGoalposeChange)
+
+    // 交互监听器始终注册，handlers 内部控制是否处理
+    dom.addEventListener('pointerdown', onDown)
+    dom.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+
+    // 初始化一次状态
+    onGoalposeChange()
 
     return () => {
-      controls.enabled = prevControlsEnabled
+      cleanupPreview()
       dom.style.cursor = ''
+      controls.enabled = true
       dom.removeEventListener('pointerdown', onDown)
       dom.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
-      cleanupPreview()
-      if (!goalPoseMode) getRosDataManager()?.releaseGoalPosePublisher?.()
+      window.removeEventListener('toolpanel:goalposemodechange', onGoalposeChange)
+      window.removeEventListener('toolpanel:editmodechange', onGoalposeChange)
     }
-  }, [goalPoseMode, onGoalPoseComplete])
+  }, [])
 
-  // ── Trajectory ────────────────────────────────────────────────────────
+  // ── Placing mode: crosshair cursor + click to place ──────────────────
   useEffect(() => {
-    const { trajGroup } = refs.current
-    if (!trajGroup) return
-    trajGroup.clear()
-    if (!visualization.showPath || trajectory.length < 2) return
-    // rosRoot Z-up：路径点在 Z=0.06（略高于地面）
-    const pts = trajectory.map(p => new THREE.Vector3(p.x, p.y??0, 0.06))
-    const geo = new THREE.BufferGeometry().setFromPoints(new THREE.CatmullRomCurve3(pts).getPoints(pts.length * 4))
-    trajGroup.add(new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x4fc3f7 })))
+    const { renderer, rosRoot, camera, controls } = refs.current
+    if (!renderer) return
+    const dom = renderer.domElement
+
+    const raycaster = new THREE.Raycaster()
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+    const mouse = new THREE.Vector2()
+
+    const screenToRos = (clientX, clientY) => {
+      const rect = dom.getBoundingClientRect()
+      mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1
+      mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(mouse, camera)
+      const hit = new THREE.Vector3()
+      if (!raycaster.ray.intersectPlane(plane, hit)) return null
+      return rosRoot ? rosRoot.worldToLocal(hit.clone()) : hit
+    }
+
+    // Grid snap helper — 使用场景网格实际 cell size 吸附
+    const snapToGrid = (v) => {
+      const cell = refs.current._gridCellSize ?? 1
+      return Math.round(v / cell) * cell
+    }
+
+    const onDown = (e) => {
+      if (e.button !== 0) return
+
+      // ── 放置模式（优先级最高，独立于 editorMode）──────────────────────
+      if (window.__tp_placingMode) {
+        window.dispatchEvent(new CustomEvent('toolpanel:placementclick', {
+          detail: { screenX: e.clientX, screenY: e.clientY },
+        }))
+        return
+      }
+      // 单次点击：让相机控制（OrbitControls）正常处理，不拦截
+    }
+
+    // ── 编辑模式：双击追加点 ────────────────────────────────────────
+    const onDblClick = (e) => {
+      if (!window.__ep_editMode) return
+      const ros = screenToRos(e.clientX, e.clientY)
+      if (ros) {
+        window.dispatchEvent(new CustomEvent('toolpanel:editdblclick', {
+          detail: {
+            rosX: snapToGrid(ros.x), rosY: snapToGrid(ros.y), rosZ: ros.z,
+          },
+        }))
+      }
+    }
+
+    const onPlacingChange = () => {
+      const placingActive = window.__tp_placingMode
+      const editingActive = window.__ep_editMode
+
+      if (placingActive) {
+        dom.style.cursor = 'crosshair'
+      } else if (editingActive) {
+        dom.style.cursor = 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'24\' height=\'24\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%23ff9f0a\' stroke-width=\'2\'%3E%3Cline x1=\'12\' y1=\'4\' x2=\'12\' y2=\'20\'/%3E%3Cline x1=\'4\' y1=\'12\' x2=\'20\' y2=\'12\'/%3E%3Ccircle cx=\'12\' cy=\'12\' r=\'2\' fill=\'%23ff9f0a\'/%3E%3C/svg%3E") 12 12, crosshair'
+      } else {
+        dom.style.cursor = ''
+      }
+
+      if (controls) {
+        // 编辑模式下保持相机控制可用（旋转/缩放/平移），仅放置模式和 goalpose 模式禁用相机
+        controls.enabled = !placingActive && !window.__tp_goalposeMode
+      }
+    }
+
+    window.addEventListener('toolpanel:placingchange', onPlacingChange)
+    window.addEventListener('toolpanel:editmodechange', onPlacingChange)
+    dom.addEventListener('pointerdown', onDown)
+    dom.addEventListener('dblclick', onDblClick)
+    return () => {
+      dom.style.cursor = ''
+      if (controls) controls.enabled = true
+      dom.removeEventListener('pointerdown', onDown)
+      dom.removeEventListener('dblclick', onDblClick)
+      window.removeEventListener('toolpanel:placingchange', onPlacingChange)
+      window.removeEventListener('toolpanel:editmodechange', onPlacingChange)
+    }
+  }, [])
+
+  // ── Trajectory — 通过 MarkerManager 使用 PathMarker ──────────────────────
+  useEffect(() => {
+    const { markerManager } = refs.current
+    if (!markerManager) return
+    if (!visualization.showPath || trajectory.length < 2) {
+      markerManager.remove('trajectory')
+      return
+    }
+    const pts = trajectory.map(p => ({ x: p.x, y: p.y ?? 0, z: 0.06 }))
+    if (!markerManager.get('trajectory')) {
+      markerManager.set('trajectory', 'path', '__preprocessed__', {
+        color:     '#4fc3f7',
+        alpha:     1.0,
+        lineStyle: 'lines',
+        lineWidth: 0.025,
+      })
+    }
+    markerManager.update('trajectory', { points: pts })
+    // trajGroup 保留作为 display:toggle 的引用层，PathMarker 已挂在其下
+    if (refs.current.trajGroup) refs.current.trajGroup.visible = true
   }, [trajectory, visualization.showPath])
 
-  // ── History ───────────────────────────────────────────────────────────
+  // ── History — 通过 MarkerManager 使用 PathMarker ──────────────────────────
   useEffect(() => {
-    const { histGroup } = refs.current
-    if (!histGroup) return
-    histGroup.clear()
-    if (!visualization.showHistory || historyPath.length < 2) return
-    const pts = historyPath.map(p => new THREE.Vector3(p.x, p.y??0, 0.04))
-    histGroup.add(new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints(pts),
-      new THREE.LineBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 0.65 })
-    ))
+    const { markerManager } = refs.current
+    if (!markerManager) return
+    if (!visualization.showHistory || historyPath.length < 2) {
+      markerManager.remove('history')
+      return
+    }
+    const pts = historyPath.map(p => ({ x: p.x, y: p.y ?? 0, z: 0.04 }))
+    if (!markerManager.get('history')) {
+      markerManager.set('history', 'path', '__preprocessed__', {
+        color:     '#4ade80',
+        alpha:     0.65,
+        lineStyle: 'lines',
+        lineWidth: 0.025,
+      })
+    }
+    markerManager.update('history', { points: pts })
+    if (refs.current.histGroup) refs.current.histGroup.visible = true
   }, [historyPath, visualization.showHistory])
 
   return (

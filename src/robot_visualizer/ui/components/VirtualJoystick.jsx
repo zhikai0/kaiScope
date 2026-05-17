@@ -28,7 +28,6 @@ function SingleJoystick({ side, onMove, onRelease }) {
     }
     const nx = Math.abs(dx) < deadzone ? 0 : dx / maxR
     const ny = Math.abs(dy) < deadzone ? 0 : dy / maxR
-    console.log(`[Joystick:${side}] move dx=${dx.toFixed(1)} dy=${dy.toFixed(1)} nx=${nx.toFixed(2)} ny=${ny.toFixed(2)}`)
     onMove?.({ x: nx, y: -ny })  // y 取反：上推正值
   }, [onMove, side])
 

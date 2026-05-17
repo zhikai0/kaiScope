@@ -106,13 +106,11 @@ export class ControlManager {
   setLeftY(v) {
     this._targetLeftY  = Math.max(-1, Math.min(1, v))
     this._leftActive   = true
-    console.log(`[ControlManager] setLeftY=${v.toFixed(3)} target=${this._targetLeftY.toFixed(3)}`)
     this._ensureTimer()
   }
 
   /** 左摇杆释放 */
   releaseLeft() {
-    console.log('[ControlManager] releaseLeft')
     this._targetLeftY = 0
     this._leftActive  = false
     this._ensureTimer()
@@ -122,13 +120,11 @@ export class ControlManager {
   setRightX(v) {
     this._targetRightX = Math.max(-1, Math.min(1, v))
     this._rightActive  = true
-    console.log(`[ControlManager] setRightX=${v.toFixed(3)} target=${this._targetRightX.toFixed(3)}`)
     this._ensureTimer()
   }
 
   /** 右摇杆释放 */
   releaseRight() {
-    console.log('[ControlManager] releaseRight')
     this._targetRightX = 0
     this._rightActive  = false
     this._ensureTimer()
@@ -198,10 +194,7 @@ export class ControlManager {
 
   _publish() {
     const mgr = getRosDataManager()
-    if (!mgr) { console.warn('[ControlManager] no RosDataManager'); return }
-    const lin = +this._curLinear.toFixed(4)
-    const ang = +this._curAngular.toFixed(4)
-    console.log(`[ControlManager] publish linear=${lin} angular=${ang} wsState=${mgr.conn?.ws?.readyState}`)
+    if (!mgr) return
     mgr.publishCmdVel(
       { x: this._curLinear,  y: 0, z: 0 },
       { x: 0, y: 0, z: this._curAngular }

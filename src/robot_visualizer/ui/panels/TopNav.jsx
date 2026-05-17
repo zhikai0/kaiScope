@@ -17,34 +17,13 @@ const STATUS_LABEL = {
   disconnected: 'Foxglove',
 }
 
-export default function TopNav({ goalPoseMode, onToggleGoalPose, controlMode, onToggleControl, onOpenControlConfig, onBack }) {
+export default function TopNav({ editorMode, onToggleEditor, toolMode, onToggleTool, onBack }) {
   const { status, channels, connect, disconnect } = useRos()
-
   const isConnected = status === 'connected'
 
   const handleFoxglove = () => {
     if (isConnected) disconnect()
     else connect()
-  }
-
-  // 长按 Control 按钮打开配置
-  const pressTimer = useRef(null)
-  const handleControlMouseDown = () => {
-    pressTimer.current = setTimeout(() => {
-      pressTimer.current = null
-      onOpenControlConfig?.()
-    }, 500)
-  }
-  const handleControlMouseUp = () => {
-    if (pressTimer.current) {
-      clearTimeout(pressTimer.current)
-      pressTimer.current = null
-      onToggleControl?.()
-    }
-  }
-  const handleControlContextMenu = (e) => {
-    e.preventDefault()
-    onOpenControlConfig?.()
   }
 
   return (
@@ -66,39 +45,30 @@ export default function TopNav({ goalPoseMode, onToggleGoalPose, controlMode, on
         </>
       )}
 
-      {/* CENTER — 2D Goal Pose */}
+      {/* CENTER — Editor button */}
       <button
-        className={`tb-goalpose ${goalPoseMode ? 'active' : ''}`}
-        onClick={onToggleGoalPose}
-        title="2D Goal Pose"
+        className={`tb-editor ${editorMode ? 'active' : ''}`}
+        onClick={onToggleEditor}
+        title="Path Editor"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M4 20V10"/>
-          <path d="M4 10h11l-2.5 3 2.5 3H4"/>
+          <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/>
         </svg>
-        <span>2D Goal Pose</span>
+        <span>Editor</span>
       </button>
 
       <div className="tb-div"/>
 
-      {/* CENTER — Control button */}
+      {/* CENTER — Tool button */}
       <button
-        className={`tb-control ${controlMode ? 'active' : ''}`}
-        onMouseDown={handleControlMouseDown}
-        onMouseUp={handleControlMouseUp}
-        onMouseLeave={() => { if(pressTimer.current){ clearTimeout(pressTimer.current); pressTimer.current=null } }}
-        onContextMenu={handleControlContextMenu}
-        title="点击开关摇杆 | 长按/右键 配置参数"
+        className={`tb-tool ${toolMode ? 'active' : ''}`}
+        onClick={onToggleTool}
+        title="Tool Palette"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="3"/>
-          <circle cx="12" cy="12" r="9"/>
-          <line x1="12" y1="3" x2="12" y2="6"/>
-          <line x1="12" y1="18" x2="12" y2="21"/>
-          <line x1="3" y1="12" x2="6" y2="12"/>
-          <line x1="18" y1="12" x2="21" y2="12"/>
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
         </svg>
-        <span>Control</span>
+        <span>Tool</span>
       </button>
 
       <div className="tb-div"/>

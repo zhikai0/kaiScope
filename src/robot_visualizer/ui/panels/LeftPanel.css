@@ -158,6 +158,10 @@
   font-size: 0.62rem; color: transparent;
   cursor: pointer; transition: all 0.15s; user-select: none;
 }
+/* 勾选框始终保持可交互 */
+.di-chk-box {
+  pointer-events: auto !important;
+}
 /* 勾选激活态 */
 .di-chk-box.chk-on {
   background: rgba(10,132,255,0.8); border-color: var(--accent);
