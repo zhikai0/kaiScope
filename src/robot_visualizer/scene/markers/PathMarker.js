@@ -1,19 +1,24 @@
 import * as THREE from 'three'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 import { BaseMarker } from './BaseMarker'
 
 /**
  * PathMarker — 渲染 nav_msgs/Path（或预计算好的点数组）
  *
+ * 使用 Line2 + LineMaterial 实现像素级线宽，相机拉远时视觉宽度保持不变，与 RViz 一致。
+ *
  * lineStyle:
- *  'lines'       — TubeGeometry 圆柱管道线（默认）
- *  'pointlines'  — 细管线 + 每路径点圆球（InstancedMesh）
+ *  'lines'       — 像素宽度线（默认）
+ *  'pointlines'  — 像素宽度线 + 每路径点球体（InstancedMesh）
  *
  * options:
  *  color     {string}  颜色，默认 '#19ff00'
  *  alpha     {number}  透明度 0-1，默认 1
  *  lineStyle {'lines'|'pointlines'}  默认 'lines'
- *  lineWidth {number}  lines/pointlines 模式: 管道半径（米），默认 0.05
- *  pointSize {number}  pointlines 模式: 球体半径（米），默认 0.1
+ *  lineWidth {number}  屏幕像素宽度（跟随相机缩放），默认 2px
+ *  pointSize {number}  pointlines 模式: 球体半径（米），默认 0.15
  *  pointColor {string} plines 模式: 球体颜色，默认 '#ff0000' (红色)
  */
 export class PathMarker extends BaseMarker {
@@ -29,8 +34,9 @@ export class PathMarker extends BaseMarker {
   }
 
   _build() {
-    this._mesh = null
-    this._pts  = null
+    this._mesh     = null
+    this._lineMesh = null
+    this._pts      = null
   }
 
   update(data) {
@@ -53,17 +59,17 @@ export class PathMarker extends BaseMarker {
     const color     = this.options.color     ?? '#19ff00'
     const alpha     = this.options.alpha     ?? 1.0
     const lineStyle = this.options.lineStyle ?? 'lines'
-    const col = new THREE.Color(color)
-    const mat = new THREE.MeshPhongMaterial({
-      color:       col,
-      opacity:     alpha,
-      transparent: alpha < 1,
-      side:        THREE.DoubleSide,
-      depthWrite:  alpha >= 1,
-      shininess:   60,
-    })
+    const lineWidth = this.options.lineWidth ?? 2
 
-    if (lineStyle === 'pointlines') {
+    const col = new THREE.Color(color)
+
+    if (lineStyle === 'lines') {
+      this._mesh = this._buildLine(pts, col, alpha, lineWidth)
+      if (this._mesh) this.root.add(this._mesh)
+    } else {
+      this._mesh = this._buildLine(pts, col, alpha, lineWidth)
+      if (this._mesh) this.root.add(this._mesh)
+
       const sphereColor = new THREE.Color(this.options.pointColor ?? '#ff0000')
       const sphereMat = new THREE.MeshPhongMaterial({
         color:       sphereColor,
@@ -72,30 +78,40 @@ export class PathMarker extends BaseMarker {
         depthWrite:  alpha >= 1,
         shininess:   80,
       })
-      this._mesh     = this._buildPointLines(pts, sphereMat)
-      this._lineMesh = this._buildTube(pts, mat)
+      this._lineMesh = this._buildPointLines(pts, sphereMat)
       if (this._lineMesh) this.root.add(this._lineMesh)
-    } else {
-      this._mesh = this._buildTube(pts, mat)
     }
-
-    if (this._mesh) this.root.add(this._mesh)
   }
 
-  /** 圆柱管道线（TubeGeometry） */
-  _buildTube(pts, mat) {
-    const radius   = this.options.lineWidth ?? 0.025
-    const vectors  = pts.map(p => new THREE.Vector3(p.x ?? 0, p.y ?? 0, p.z ?? 0))
-    const curve    = new THREE.CatmullRomCurve3(vectors)
-    const tubeSeg  = Math.min(pts.length * 3, 1024)
-    const geo      = new THREE.TubeGeometry(curve, tubeSeg, radius, 8, false)
-    return new THREE.Mesh(geo, mat)
+  /** 像素宽度线（Line2，toneMapped: false 避免二次 gamma） */
+  _buildLine(pts, color, alpha, lineWidth) {
+    const positions = []
+    for (const p of pts) {
+      positions.push(p.x ?? 0, p.y ?? 0, p.z ?? 0)
+    }
+
+    const geo = new LineGeometry()
+    geo.setPositions(positions)
+
+    const mat = new LineMaterial({
+      color: color,
+      linewidth: lineWidth,
+      transparent: alpha < 1,
+      opacity: alpha,
+      toneMapped: false,
+      depthWrite: true,
+      resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+    })
+
+    const line = new Line2(geo, mat)
+    line.computeLineDistances()
+    return line
   }
 
   /** InstancedMesh 渲染圆球，pointlines 模式专用 */
   _buildPointLines(pts, mat) {
-    const radius = this.options.pointSize ?? 0.1
-    const geo    = new THREE.SphereGeometry(radius, 12, 8)
+    const radius = this.options.pointSize ?? 0.15
+    const geo    = new THREE.SphereGeometry(radius, 10, 6)
     const mesh   = new THREE.InstancedMesh(geo, mat, pts.length)
     mesh.frustumCulled = false
     const dummy = new THREE.Object3D()
@@ -110,14 +126,14 @@ export class PathMarker extends BaseMarker {
 
   _clear() {
     if (this._mesh) {
-      this._mesh.geometry.dispose()
-      this._mesh.material.dispose()
+      this._mesh.geometry?.dispose()
+      this._mesh.material?.dispose()
       this.root.remove(this._mesh)
       this._mesh = null
     }
     if (this._lineMesh) {
-      this._lineMesh.geometry.dispose()
-      this._lineMesh.material.dispose()
+      this._lineMesh.geometry?.dispose()
+      this._lineMesh.material?.dispose()
       this.root.remove(this._lineMesh)
       this._lineMesh = null
     }

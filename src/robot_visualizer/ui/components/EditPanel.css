@@ -11,7 +11,7 @@
   box-shadow: 0 8px 32px rgba(0,0,0,0.45);
   display: flex;
   flex-direction: column;
-  z-index: 100;
+  z-index: 500;
   font-family: 'Segoe UI', system-ui, sans-serif;
   overflow: hidden;
   animation: ep-slide-in 0.2s ease-out;
@@ -137,7 +137,7 @@
   height: 1rem;
 }
 .ep-points-list {
-  max-height: 180px;
+  max-height: 150px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;

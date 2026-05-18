@@ -158,6 +158,20 @@
 .tb-status{display:flex;align-items:center;padding:0 0.25rem;}
 .tb-dot{width:0.44rem;height:0.44rem;border-radius:50%;transition:background 0.3s;}
 
+/* Settings button */
+.tb-settings {
+  display:flex;align-items:center;justify-content:center;
+  width:1.875rem;height:1.875rem;
+  background:rgba(255,255,255,0.06);
+  border:0.5px solid var(--glass-border);
+  border-radius:0.75rem;
+  color:var(--text-2);
+  cursor:pointer;
+  transition:all 0.18s var(--spring);
+  flex-shrink:0;
+}
+.tb-settings:hover{background:rgba(255,255,255,0.12);color:var(--text-0);}
+
 @media(max-width:600px){
   .toolbar-capsule{max-width:calc(100vw - 1rem);gap:0.2rem;padding:0.25rem 0.4rem;}
   .tb-displays span:last-child,.tb-connect span:last-child{display:none;}

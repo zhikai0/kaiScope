@@ -493,8 +493,14 @@ export default function EditPanel({ editorMode, onClose }) {
   const [toolStates, setToolStates] = useState(() => {
     const defaults = Object.fromEntries(EDIT_TOOLS.map(t => [t.id, { ...t.defaultState }]))
     if (persisted) {
-      // 恢复持久化状态
-      return { ...defaults, ...persisted }
+      // 恢复持久化状态，但 publishing 永远重置为 false（publisher 刷新后不存在了）
+      const restored = { ...defaults, ...persisted }
+      for (const key of Object.keys(restored)) {
+        if (restored[key] && typeof restored[key] === 'object' && 'publishing' in restored[key]) {
+          restored[key] = { ...restored[key], publishing: false }
+        }
+      }
+      return restored
     }
     return defaults
   })
@@ -528,6 +534,10 @@ export default function EditPanel({ editorMode, onClose }) {
     window.dispatchEvent(new CustomEvent('toolpanel:editmodechange'))
     if (!editorMode) {
       SceneCommandBus.dispatch({ type: 'scene:editpath:update', points: [], previewPts: [] })
+    } else {
+      // 进入编辑模式时，立即渲染已有路径点
+      const { points = [] } = state || {}
+      SceneCommandBus.dispatch({ type: 'scene:editpath:update', points, previewPts: [] })
     }
   }, [editorMode])
 

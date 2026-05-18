@@ -115,3 +115,8 @@ export function routeParam(displayTypeId, paramKey, value) {
     if (cmd) SceneCommandBus.dispatch(cmd)
   }
 }
+
+// ── Connection change handler ───────────────────────────────────────────────
+export function dispatchConnectionChange() {
+  SceneCommandBus.dispatch({ type: 'connection:change' })
+}

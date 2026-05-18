@@ -255,6 +255,29 @@ export class RosDataManager extends EventTarget {
 
   _doPublishCmdVel(linear, angular) { this.publishCmdVel(linear, angular) }
 
+  advertiseGoalPose() {
+    if (this.conn?.ws?.readyState !== WebSocket.OPEN) return
+    if (this._goalPoseWriter && this._goalPoseChanId) return
+
+    const ch = Array.from(this._channels.values()).find(
+      c => c.schemaName === 'geometry_msgs/msg/PoseStamped' && c.schema
+    )
+
+    const chanId = this.conn.advertise({
+      topic: '/goal_pose',
+      encoding: 'cdr',
+      schemaName: 'geometry_msgs/msg/PoseStamped',
+    })
+    if (!chanId) return
+
+    try {
+      const msgDef = parse(ch?.schema || POSE_STAMPED_SCHEMA_FALLBACK, { ros2: true })
+      this._goalPoseWriter = new MessageWriter(msgDef)
+      this._goalPoseChanId = chanId
+    } catch (e) {
+    }
+  }
+
   publishGoalPose({ x, y, yaw, frameId = 'map' }) {
     if (this.conn?.ws?.readyState !== WebSocket.OPEN) return
 

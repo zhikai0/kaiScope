@@ -238,10 +238,10 @@ useEffect(() => {
 
   // ── 点击已放置的按钮 ───────────────────────────────────────────────
   const handleTrigger = useCallback((item) => {
-    if (editorMode || goalposeMode) return
+    if (editorMode) return
     if (item.presetType === 'goalpose') {
-      // 激活 goalpose 拖拽模式（独立于 editorMode）
-      onGoalposeModeChange?.(true)
+      // Toggle goalpose 模式
+      onGoalposeModeChange?.(v => !v)
     } else if (item.presetType === 'joystick') {
       setJoystickOn(v => !v)
     } else {
@@ -254,7 +254,7 @@ useEffect(() => {
         catch { mgr.publishGeneric?.(item.topic, item.msgType, {}) }
       }
     }
-  }, [editorMode, goalposeMode, onGoalposeModeChange])
+  }, [editorMode, onGoalposeModeChange])
 
   // ── 拖拽 ───────────────────────────────────────────────────────────
   const handleDrag = useCallback((id, x, y) => {
@@ -262,7 +262,11 @@ useEffect(() => {
   }, [])
 
   const handleRemovePlaced = (id) => {
+    const removed = placed.find(c => c.id === id)
     setPlaced(prev => { const next = prev.filter(c => c.id !== id); savePlaced(next); return next })
+    if (removed?.presetType === 'joystick') {
+      setJoystickOn(false)
+    }
   }
 
   const handleRemoveTool = (id) => {
@@ -273,6 +277,17 @@ useEffect(() => {
   const handlePlaceItem = useCallback((item) => {
     setPlacing({ ...item })
   }, [])
+
+  // ── 选中/取消 goalpose → advertise / unadvertise /move_base_simple/goal ──
+  useEffect(() => {
+    const mgr = getRosDataManager()
+    if (goalposeMode) {
+      mgr?.advertiseGoalPose?.()
+    } else {
+      mgr?.releaseGoalPosePublisher?.()
+    }
+    return () => { mgr?.releaseGoalPosePublisher?.() }
+  }, [goalposeMode])
 
   // ── 选中/取消 joystick → advertise / unadvertise /cmd_vel ──────────
   useEffect(() => {

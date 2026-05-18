@@ -44,11 +44,24 @@ export class MeshLoader {
 
   _loadCollada(proxyUrl) {
     return new Promise((resolve, reject) => {
+      // 压制 ColladaLoader 的 Z-UP 坐标系警告
+      const originalWarn = console.warn
+      console.warn = (...args) => {
+        if (args[0]?.toString?.().includes('Z-UP coordinate system')) return
+        originalWarn.apply(console, args)
+      }
+
       this._colladaLoader.load(
         proxyUrl,
-        (collada) => resolve(collada.scene),
+        (collada) => {
+          console.warn = originalWarn
+          resolve(collada.scene)
+        },
         undefined,
-        (err) => reject(err)
+        (err) => {
+          console.warn = originalWarn
+          reject(err)
+        }
       )
     })
   }

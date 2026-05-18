@@ -45,6 +45,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
   const persistedState = useRef(loadViewportState(panelId))
   const [viewMode, setViewMode] = useState(persistedState.current.viewMode || 'orbit')
   const prevEditorModeRef = useRef(false)
+  const prevViewModeRef   = useRef('orbit')
 
   const trajectory    = useSimStore(s => s.trajectory)
   const historyPath   = useSimStore(s => s.historyPath)
@@ -127,12 +128,23 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     // ── MapLayer 组件（9宫格地图贴图管理，替代旧 ground mesh） ────────
     const mapLayer = new MapLayer(scene)
 
-    // ── Grid overlay (RViz style: single layer, grey, alpha 0.5) ──────────
-    const GRID_COLOR = 0xa0a0a4  // 160:160:164
-    const gridMaj = new THREE.GridHelper(10, 10, GRID_COLOR, GRID_COLOR)
-    gridMaj.position.y = 0.01
-    gridMaj.material.opacity = 0.5
-    gridMaj.material.transparent = true
+    // ── Unlit grid helper ────────────────────────────────────────────────────
+    // GridHelper 默认是 MeshPhongMaterial（受光照影响，0.5 alpha 会比 RViz 亮）
+    // 用 MeshBasicMaterial 替代，使其完全不受光照，alpha 0.5 与 RViz 视觉一致
+    const makeUnlitGridHelper = (size, divisions, color) => {
+      const grid = new THREE.GridHelper(size, divisions, color, color)
+      grid.position.y = 0.01
+      const mat = new THREE.MeshBasicMaterial({
+        color,
+        transparent: true,
+        opacity: 0.5,
+        depthWrite: false,
+      })
+      grid.material = mat
+      return grid
+    }
+    const GRID_COLOR = 0xa0a0a4
+    const gridMaj = makeUnlitGridHelper(10, 10, GRID_COLOR)
     scene.add(gridMaj)
     // THREE.AxesHelper 已由 AxesMarker 系统替代，此处不再添加
 
@@ -452,10 +464,8 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         const opacity = cur?.material.opacity ?? 0.5
         const color   = cur?.material.color?.getHex() ?? 0xa0a0a4
         if (cur) scene.remove(cur)
-        const newGrid = new THREE.GridHelper(totalSize, divisions, color, color)
-        newGrid.position.y = 0.01
+        const newGrid = makeUnlitGridHelper(totalSize, divisions, color)
         newGrid.material.opacity = opacity
-        newGrid.material.transparent = true
         scene.add(newGrid)
         refs.current.gridMaj = newGrid
         refs.current._gridCount = divisions
@@ -468,10 +478,8 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         const opacity = cur?.material.opacity ?? 0.5
         const color   = cur?.material.color?.getHex() ?? 0xa0a0a4
         if (cur) scene.remove(cur)
-        const newGrid = new THREE.GridHelper(totalSize, divisions, color, color)
-        newGrid.position.y = 0.01
+        const newGrid = makeUnlitGridHelper(totalSize, divisions, color)
         newGrid.material.opacity = opacity
-        newGrid.material.transparent = true
         scene.add(newGrid)
         refs.current.gridMaj = newGrid
         refs.current._gridCellSize = s
@@ -565,17 +573,15 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         if (p1) mkEndpoint(p1.x, p1.y)
         if (p2) mkEndpoint(p2.x, p2.y)
 
-        // ── 已完成路径：绿色 tube + 红球（lineStyle='pointlines'）───────────────
+        // ── 已完成路径：绿色粗线 ────────────────────────────────────────────────
         if (points.length >= 1) {
           const pts = points.map(p => ({ x: p.x, y: p.y, z: 0 }))
           if (!markerManager.get(ACCUM_KEY)) {
             markerManager.set(ACCUM_KEY, 'path', '__preprocessed__', {
-              color:      '#22ff66',
-              alpha:      1.0,
-              lineStyle:  'pointlines',
-              lineWidth:  0.025,
-              pointSize:  0.08,
-              pointColor: '#ff2222',
+              color:     '#19ff00',
+              alpha:     1.0,
+              lineStyle: 'pointlines',
+              lineWidth: 2,
             })
           }
           markerManager.update(ACCUM_KEY, { points: pts })
@@ -583,17 +589,15 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
           markerManager.remove(ACCUM_KEY)
         }
 
-        // ── 预览曲线：蓝色 tube + 红球（lineStyle='pointlines'）───────────────
+        // ── 预览曲线：青色粗线 ──────────────────────────────────────────────────
         if (previewPts.length >= 2) {
           const pts = previewPts.map(p => ({ x: p.x, y: p.y, z: 0 }))
           if (!markerManager.get(PREVIEW_KEY)) {
             markerManager.set(PREVIEW_KEY, 'path', '__preprocessed__', {
-              color:      '#44aaff',
-              alpha:      1.0,
-              lineStyle:  'pointlines',
-              lineWidth:  0.025,
-              pointSize:  0.08,
-              pointColor: '#ff2222',
+              color:     '#00ffff',
+              alpha:     1.0,
+              lineStyle: 'pointlines',
+              lineWidth: 2,
             })
           }
           markerManager.update(PREVIEW_KEY, { points: pts })
@@ -888,13 +892,16 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     }
   }, [viewMode])
 
-  // ── Edit mode: top-down + controls disabled ───────────────────────────
+  // ── Edit mode: top-down + restore on exit ─────────────────────────────
   useEffect(() => {
     const wasEditing = prevEditorModeRef.current
     prevEditorModeRef.current = editorMode
 
     if (editorMode && !wasEditing) {
+      prevViewModeRef.current = viewMode
       setViewMode('topdown')
+    } else if (!editorMode && wasEditing) {
+      setViewMode(prevViewModeRef.current)
     }
   }, [editorMode])
 

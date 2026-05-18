@@ -1,6 +1,7 @@
-import { useRef } from 'react'
+import { useState } from 'react'
 import { useRos } from '../hooks/useRos'
 import './TopNav.css'
+import SettingsModal from '../components/SettingsModal'
 
 const STATUS_COLOR = {
   connected:    'var(--green)',
@@ -20,6 +21,7 @@ const STATUS_LABEL = {
 export default function TopNav({ editorMode, onToggleEditor, toolMode, onToggleTool, onBack }) {
   const { status, channels, connect, disconnect } = useRos()
   const isConnected = status === 'connected'
+  const [showSettings, setShowSettings] = useState(false)
 
   const handleFoxglove = () => {
     if (isConnected) disconnect()
@@ -83,6 +85,23 @@ export default function TopNav({ editorMode, onToggleEditor, toolMode, onToggleT
         <span>{STATUS_LABEL[status] || 'Foxglove'}</span>
         {channels.length > 0 && <span className="tb-ch-count">{channels.length}</span>}
       </button>
+
+      {/* Settings */}
+      <button
+        className="tb-settings"
+        onClick={() => setShowSettings(true)}
+        title="设置"
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+
+      <SettingsModal
+        open={showSettings}
+        onClose={() => setShowSettings(false)}
+      />
 
       <div className="tb-div"/>
 

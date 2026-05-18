@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { RosConnection } from '../../data/RosConnection'
 import { RosDataManager } from '../../data/RosDataManager'
+import { dispatchConnectionChange } from '../../manager/SceneCommandBus'
 
 // Singleton instances — shared across all components
 let _conn = null
@@ -19,18 +20,42 @@ let _mgr  = null
 
 function getInstances(url) {
   if (!_conn) {
-    _conn = new RosConnection(url)
+    // 如果没传 url，尝试从 localStorage 读取
+    const savedUrl = _getSavedWsUrl()
+    _conn = new RosConnection(url ?? savedUrl ?? undefined)
     _mgr  = new RosDataManager(_conn)
   }
   return { conn: _conn, mgr: _mgr }
 }
 
-/**
- * Get the shared RosDataManager instance (for use outside React).
- * Returns null if not yet initialized (call useRos first).
- */
-export function getSharedMgr(url) {
-  return getInstances(url || undefined).mgr
+function _getSavedWsUrl() {
+  try {
+    return localStorage.getItem('kaiscope-ws-url') || ''
+  } catch { return '' }
+}
+
+export function getSavedWsUrl() {
+  return _getSavedWsUrl()
+}
+
+export function getSharedMgr() {
+  return getInstances(undefined).mgr
+}
+
+export function getSharedConn() {
+  return _conn
+}
+
+export function reconnectWithUrl(url) {
+  if (_conn) {
+    _conn.disconnect()
+    _conn = null
+    _mgr = null
+  }
+  // 切换连接前清空缓存
+  dispatchConnectionChange()
+  getInstances(url || undefined)
+  return { conn: _conn, mgr: _mgr }
 }
 
 /**

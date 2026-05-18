@@ -51,6 +51,10 @@ export class DisplayManager extends EventBus {
     SceneCommandBus.on('scene:reset', () => {
       this._replayRobotModelsToScene()
     })
+    // 切换 IP 时清空 URDF 缓存
+    SceneCommandBus.on('connection:change', () => {
+      this._lastRobotModel.clear()
+    })
   }
 
   // ── Connect to data layer ────────────────────────────────────────────

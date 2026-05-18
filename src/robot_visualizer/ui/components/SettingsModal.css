@@ -1,0 +1,113 @@
+.sm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.sm-panel {
+  background: var(--panel-bg, #1c1c22);
+  border: 0.5px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  width: 360px;
+  max-width: calc(100vw - 2rem);
+  box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+}
+
+.sm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 0.5px solid rgba(255,255,255,0.08);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.sm-close {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 0 0.25rem;
+  line-height: 1;
+}
+.sm-close:hover { color: var(--text-0); }
+
+.sm-body {
+  padding: 1.25rem;
+}
+
+.sm-label {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--text-2);
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.sm-input {
+  width: 100%;
+  padding: 0.625rem 0.875rem;
+  background: rgba(255,255,255,0.06);
+  border: 0.5px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  color: var(--text-0);
+  font-size: 0.875rem;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.sm-input:focus {
+  border-color: rgba(255,255,255,0.25);
+}
+.sm-input::placeholder { color: var(--text-3); }
+
+.sm-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.7rem;
+  color: var(--text-3);
+}
+
+.sm-footer {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding: 1rem 1.25rem;
+  border-top: 0.5px solid rgba(255,255,255,0.08);
+}
+
+.sm-btn {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 0.5px solid transparent;
+}
+
+.sm-btn-cancel {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+  color: var(--text-1);
+}
+.sm-btn-cancel:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-0);
+}
+
+.sm-btn-save {
+  background: rgba(52,199,89,0.2);
+  border-color: rgba(52,199,89,0.4);
+  color: var(--green);
+}
+.sm-btn-save:hover {
+  background: rgba(52,199,89,0.3);
+}

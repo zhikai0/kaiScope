@@ -16,13 +16,13 @@
   width: 9rem;
   height: 9rem;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1.5px solid rgba(255, 255, 255, 0.25);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   box-shadow:
-    0 4px 24px rgba(0,0,0,0.35),
-    0 0 0 1px rgba(255,255,255,0.04) inset;
+    0 4px 24px rgba(0,0,0,0.25),
+    0 0 0 1px rgba(255,255,255,0.06) inset;
   pointer-events: all;
   cursor: grab;
   user-select: none;
@@ -30,14 +30,14 @@
   touch-action: none;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
-.vj-base:active { border-color: rgba(255,159,10,0.5); }
+.vj-base:active { border-color: rgba(255,255,255,0.5); }
 
 /* 摇杆环 */
 .vj-ring {
   position: absolute;
   inset: 18%;
   border-radius: 50%;
-  border: 1px dashed rgba(255,255,255,0.10);
+  border: 1px solid rgba(255,255,255,0.18);
   pointer-events: none;
 }
 
@@ -65,12 +65,12 @@
   border-radius: 50%;
   background: radial-gradient(
     circle at 35% 35%,
-    rgba(220,245,255,0.55),
-    rgba(56,188,255,0.58) 55%,
-    rgba(8,96,196,0.82)
+    #ffffff,
+    #e8e8e8 50%,
+    #cccccc
   );
-  border: 1px solid rgba(102,220,255,0.45);
-  box-shadow: 0 2px 14px rgba(58,180,255,0.35), 0 1px 3px rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.5);
+  box-shadow: 0 2px 14px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.25);
   pointer-events: none;
   will-change: transform;
 }
