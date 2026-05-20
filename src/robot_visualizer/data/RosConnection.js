@@ -99,7 +99,8 @@ export class RosConnection extends EventTarget {
 
   _open() {
     try {
-      this.ws = new WebSocket(this.url, ['foxglove.websocket.v1'])
+      // this.ws = new WebSocket(this.url, ['foxglove.websocket.v1'])
+      this.ws = new WebSocket(this.url, ['foxglove.sdk.v1'])
       this.ws.binaryType = 'arraybuffer'
 
       this.ws.onopen = () => {

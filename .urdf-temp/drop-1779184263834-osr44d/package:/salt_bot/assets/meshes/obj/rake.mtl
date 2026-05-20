@@ -1,0 +1,22 @@
+# Blender 4.2.9 LTS MTL File: 'None'
+# www.blender.org
+
+newmtl tripo_material_a3a2587c-4b03-4c1b-8e94-3010057b669c.004
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/7.intelligent/9.K/10.study/robotstudy/zkai-robot/src/zkai-rosbook/kros2-humble/src/robot_platform/src/ackbot/description/urdf/salt_bot/assets/material/rake.jpg
+
+newmtl tripo_material_a3a2587c-4b03-4c1b-8e94-3010057b669c.005
+Ns 250.000000
+Ka 1.000000 1.000000 1.000000
+Ks 0.000000 0.000000 0.000000
+Ke 0.000000 0.000000 0.000000
+Ni 1.500000
+d 1.000000
+illum 1
+map_Kd D:/7.intelligent/9.K/10.study/robotstudy/zkai-robot/src/zkai-rosbook/kros2-humble/src/robot_platform/src/ackbot/description/urdf/salt_bot/assets/material/rake.jpg

@@ -3,6 +3,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { CameraViews } from './views/CameraViews.js'
 import { setupImportedCloudDrop, getImportedAssetStore, importLocalAssetFile } from './importers'
+import { URDFFileLoader } from './urdf_loader'
 import { useSimStore } from '../ui/store/simStore'
 import { useMapStore } from '../ui/store/mapStore'
 import { SceneCommandBus } from '../manager/SceneCommandBus'
@@ -12,7 +13,7 @@ import { MapLayer } from './map/MapLayer'
 import { getTfManager } from '../data/TfManager'
 import { getRosDataManager } from '../data/getRosDataManager'
 import { getTfDisplayManager } from '../manager/TfDisplayManager'
-import { createSmoothFollowState, updateSmoothFollow, calcAlpha } from '../utils/interpolation.js'
+import { calcAlpha } from '../utils/interpolation.js'
 import './Viewport3D.css'
 
 const VIEWPORT_KEY_PREFIX = 'kaiscope-viewport-'
@@ -327,7 +328,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       })
     }
 
-    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, editPathGroup, importedGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot, _tfSmoothFollow: new Map(), _jointSmooth: new Map() }
+    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, editPathGroup, importedGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot, _tfMarkerKeys: new Set(), _jointSmooth: new Map(), _robotLinkNames: new Map() }
     const importedAssetStore = getImportedAssetStore()
     syncImportedAssets(importedAssetStore.getAssets())
     const unsubscribeImportedAssets = importedAssetStore.onChange(syncImportedAssets)
@@ -365,12 +366,12 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       if (refs.current.cameraViews?.mode === 'orbit' && controls.enabled) {
         controls.update()
       }
-      // 9宫格地图：根据 rosRoot 的当前位置驱动瓦片滚动
+      // 9宫格地图：根据 rosRoot 的当前位置驱动瓦片滚动wo
       const rr = refs.current.rosRoot
       if (rr && refs.current.mapLayer) {
         const p = new THREE.Vector3()
         rr.getWorldPosition(p)
-        refs.current.mapLayer.tick({ x: p.x, y: -p.z })  // Three.js Z-up→Y: rosRoot z=-y
+        refs.current.mapLayer.tick(camera, renderer)  // Cesium 视锥体投影驱动瓦片加载
       }
       // ── URDF 模型 + TF Marker 同步跟随 ───────────────────────────
       // URDF 模型直接跟随
@@ -385,23 +386,35 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         })
       }
 
-      // TF Marker 平滑插值（唯一用 lerp 的地方）
-      const tfSmoothFollow = refs.current._tfSmoothFollow
-      if (tfSmoothFollow && tfSmoothFollow.size > 0) {
-        const alpha = calcAlpha(60, dt)
-        tfSmoothFollow.forEach((state, key) => {
+      // TF Marker 直接跟随（无插值，与 URDF 模型一致）
+      const tfMarkerKeys = refs.current._tfMarkerKeys
+      if (tfMarkerKeys && tfMarkerKeys.size > 0) {
+        tfMarkerKeys.forEach((key) => {
           const frameName = key.replace(/^tf_(axes|arrow|text)_/, '')
           const tf = tfMgr.lookupTransform(fixedFrame, frameName)
           if (!tf) return
-          state.targetPos.set(tf.translation.x, tf.translation.y, tf.translation.z)
-          state.targetQuat.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w ?? 1)
-          state.pos.lerp(state.targetPos, alpha)
-          state.quat.slerp(state.targetQuat, alpha)
           const marker = refs.current.markerManager?.get(key)
-          if (marker?.root) {
-            marker.root.position.copy(state.pos)
-            marker.root.quaternion.copy(state.quat)
+          if (!marker?.root) return
+
+          // arrow marker 需要 child 和 parent 两个位置
+          if (key.startsWith('tf_arrow_')) {
+            const childEntry = tfMgr._tf.get(frameName)
+            const parentFrame = childEntry?.parentFrame
+            if (parentFrame) {
+              const parentTf = tfMgr.lookupTransform(fixedFrame, parentFrame)
+              if (parentTf) {
+                marker.update({
+                  childPos: { x: tf.translation.x, y: tf.translation.y, z: tf.translation.z },
+                  parentPos: { x: parentTf.translation.x, y: parentTf.translation.y, z: parentTf.translation.z },
+                })
+                return
+              }
+            }
           }
+
+          // axes/text marker 直接设置 position/quaternion
+          marker.root.position.set(tf.translation.x, tf.translation.y, tf.translation.z)
+          marker.root.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w ?? 1)
         })
       }
 
@@ -437,6 +450,26 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     const cleanupImportedCloudDrop = setupImportedCloudDrop({
       element: wrap,
       onImportFile: (file) => importLocalAssetFile(file),
+    })
+
+    // URDF 文件拖拽
+    const urdfLoader = new URDFFileLoader()
+    const cleanupURDFDrop = urdfLoader.attachDropZone(wrap, {
+      onFileDrop: (entry) => {
+        const uid = `urdf-dropped-${Date.now()}`
+        SceneCommandBus.dispatch({ type: 'scene:urdf:load', uid, urdfText: entry.text })
+      },
+      onFolderDrop: ({ urdfFiles, fileMap }) => {
+        console.log('[Viewport3D] onFolderDrop, urdfFiles:', urdfFiles.length, urdfFiles.map(f => f.filename))
+        if (urdfFiles.length === 0) return
+
+        // 优先选择 .urdf 文件（而不是 .xml）
+        let entry = urdfFiles.find(f => f.filename.endsWith('.urdf'))
+        if (!entry) entry = urdfFiles[0]
+
+        console.log('[Viewport3D] loading urdf:', entry.filename, 'fileMap size:', fileMap.size)
+        SceneCommandBus.dispatch({ type: 'scene:urdf:load', uid: `urdf-dropped-${Date.now()}`, urdfText: entry.text, fileMap })
+      },
     })
 
     const unregs = [
@@ -545,16 +578,14 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       }),
 
       // ── 编辑路径实时预览 — 通过 PathMarker (lineStyle='pointlines') 渲染 ─────
-      SceneCommandBus.register('scene:editpath:update', ({ points = [], previewPts = [], p1, p2 }) => {
+      SceneCommandBus.register('scene:editpath:update', ({ points = [], previewPts = [], p1, p2, segments = [], editingSegmentId = null }) => {
         const { markerManager, editPathGroup } = refs.current
         if (!markerManager || !editPathGroup) return
 
-        const PREVIEW_KEY  = 'editpath_preview'
-        const ACCUM_KEY    = 'editpath_accum'
-
+        const PREVIEW_KEY = 'editpath_preview'
         const Z = 0.05
 
-        // ── 端点 p1/p2：亮红小球（marker 系统管不了这种独立小球，直接加 mesh）──
+        // ── 端点 p1/p2：只有当没有轨迹时才显示亮红小球 ──────────────────────
         editPathGroup.traverse(obj => {
           if (obj.userData?.isEditEndpoint) {
             obj.geometry?.dispose()
@@ -562,31 +593,47 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
           }
         })
         editPathGroup.clear()
-        const endSphereGeo = new THREE.SphereGeometry(0.12, 8, 6)
-        const endSphereMat = new THREE.MeshBasicMaterial({ color: 0xff2222 })
-        const mkEndpoint = (x, y) => {
-          const m = new THREE.Mesh(endSphereGeo, endSphereMat)
-          m.position.set(x, y, Z)
-          m.userData.isEditEndpoint = true
-          editPathGroup.add(m)
-        }
-        if (p1) mkEndpoint(p1.x, p1.y)
-        if (p2) mkEndpoint(p2.x, p2.y)
-
-        // ── 已完成路径：绿色粗线 ────────────────────────────────────────────────
-        if (points.length >= 1) {
-          const pts = points.map(p => ({ x: p.x, y: p.y, z: 0 }))
-          if (!markerManager.get(ACCUM_KEY)) {
-            markerManager.set(ACCUM_KEY, 'path', '__preprocessed__', {
-              color:     '#19ff00',
-              alpha:     1.0,
-              lineStyle: 'pointlines',
-              lineWidth: 2,
-            })
+        if (segments.length === 0) {
+          const endSphereGeo = new THREE.SphereGeometry(0.12, 8, 6)
+          const endSphereMat = new THREE.MeshBasicMaterial({ color: 0xff2222 })
+          const mkEndpoint = (x, y) => {
+            const m = new THREE.Mesh(endSphereGeo, endSphereMat)
+            m.position.set(x, y, Z)
+            m.userData.isEditEndpoint = true
+            editPathGroup.add(m)
           }
-          markerManager.update(ACCUM_KEY, { points: pts })
-        } else {
-          markerManager.remove(ACCUM_KEY)
+          if (p1) mkEndpoint(p1.x, p1.y)
+          if (p2) mkEndpoint(p2.x, p2.y)
+        }
+
+        // ── 分段渲染：每个段落一个 marker，选中为红色，其余绿色 ───────────────────────
+        segments.forEach((seg, idx) => {
+          const isEditing = seg.id === editingSegmentId
+          const color = isEditing ? '#ff3030' : '#19ff00'
+          const key = `editpath_seg_${seg.id}`
+          const pts = seg.points.map(p => ({ x: p.x, y: p.y, z: 0 }))
+          if (pts.length >= 2) {
+            if (!markerManager.get(key)) {
+              markerManager.set(key, 'path', '__preprocessed__', {
+                color,
+                alpha: 1.0,
+                lineStyle: 'pointlines',
+                lineWidth: isEditing ? 3 : 2,
+              })
+            }
+            markerManager.update(key, { points: pts, color, alpha: 1.0, lineWidth: isEditing ? 3 : 2 })
+          }
+        })
+        // 清理已删除的段落 marker
+        if (markerManager._markers) {
+          for (const key of markerManager._markers.keys()) {
+            if (key.startsWith('editpath_seg_')) {
+              const segId = key.replace('editpath_seg_', '')
+              if (!segments.find(s => s.id === segId)) {
+                markerManager.remove(key)
+              }
+            }
+          }
         }
 
         // ── 预览曲线：青色粗线 ──────────────────────────────────────────────────
@@ -594,8 +641,8 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
           const pts = previewPts.map(p => ({ x: p.x, y: p.y, z: 0 }))
           if (!markerManager.get(PREVIEW_KEY)) {
             markerManager.set(PREVIEW_KEY, 'path', '__preprocessed__', {
-              color:     '#00ffff',
-              alpha:     1.0,
+              color: '#00ffff',
+              alpha: 1.0,
               lineStyle: 'pointlines',
               lineWidth: 2,
             })
@@ -621,21 +668,17 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
             }
           }
         }
-        refs.current._tfSmoothFollow?.clear()
+        refs.current._tfMarkerKeys?.clear()
 
         // 3. Clear built-in groups
         if (refs.current.trajGroup) refs.current.trajGroup.clear()
         if (refs.current.histGroup) refs.current.histGroup.clear()
         if (refs.current.editPathGroup) refs.current.editPathGroup.clear()
 
-        // 4. Clear URDF models
+        // 4. 重新显示所有已加载的 URDF 模型（不清除，保持模型缓存）
         if (refs.current._urdfModels) {
-          refs.current._urdfModels.forEach(m => m.dispose())
-          refs.current._urdfModels.clear()
+          refs.current._urdfModels.forEach(model => model.setVisible(true))
         }
-        if (refs.current._urdfCache) refs.current._urdfCache.clear()
-        if (refs.current._urdfInflight) refs.current._urdfInflight.clear()
-        if (refs.current._urdfLoadSeq) refs.current._urdfLoadSeq.clear()
 
         // 5. Keep current camera/view mode
       }),
@@ -648,6 +691,10 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         if (!mgr) return
         try {
           mgr.set(key, markerType, rosMsgType, options || {})
+          // 自动注册 TF marker（tf_axes_*, tf_arrow_*, tf_text_*）以便 animate 循环更新
+          if (key?.startsWith('tf_')) {
+            refs.current._tfMarkerKeys?.add(key)
+          }
         } catch (e) {
           console.error('[scene:marker:set]', e.message)
         }
@@ -658,9 +705,9 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         refs.current.markerManager?.update(key, data)
       }),
 
-      // 注册 TF marker 进行平滑跟随：{ key, frameName }
+      // 注册 TF marker 直接跟随：{ key, frameName }
       SceneCommandBus.register('scene:tfMarker:register', ({ key, frameName }) => {
-        if (!refs.current._tfSmoothFollow) refs.current._tfSmoothFollow = new Map()
+        if (!refs.current._tfMarkerKeys) refs.current._tfMarkerKeys = new Set()
         const marker = refs.current.markerManager?.get(key)
         if (marker?.root) {
           // 初始化位置到当前 TF 位置
@@ -671,14 +718,27 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
             marker.root.position.set(tf.translation.x, tf.translation.y, tf.translation.z)
             marker.root.quaternion.set(tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w ?? 1)
           }
-          refs.current._tfSmoothFollow.set(key, createSmoothFollowState(marker.root.position, marker.root.quaternion))
+          refs.current._tfMarkerKeys.add(key)
         }
       }),
 
       // 移除 TF marker：{ key }
       SceneCommandBus.register('scene:marker:remove', ({ key }) => {
         refs.current.markerManager?.remove(key)
-        refs.current._tfSmoothFollow?.delete(key)
+        refs.current._tfMarkerKeys?.delete(key)
+      }),
+
+      // 清理所有 TF marker（切换机器人时调用）
+      SceneCommandBus.register('scene:marker:clearAll', () => {
+        const mgr = refs.current.markerManager
+        if (mgr?._markers) {
+          for (const key of mgr._markers.keys()) {
+            if (String(key).startsWith('tf_')) {
+              mgr.remove(key)
+            }
+          }
+        }
+        refs.current._tfMarkerKeys?.clear()
       }),
 
       // 显示/隐藏 Marker：{ key, visible }
@@ -736,22 +796,37 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       }),
 
       // ── URDF 模型加载/销毁 ────────────────────────────────────────
-      SceneCommandBus.register('scene:urdf:load', async ({ uid, urdfText }) => {
+      SceneCommandBus.register('scene:urdf:load', async ({ uid, urdfText, fileMap }) => {
         const { rosRoot } = refs.current
-        if (!rosRoot) return
+        if (!rosRoot) { console.log('[Viewport3D] no rosRoot, skipping'); return }
+
+        console.log('[Viewport3D] scene:urdf:load, uid:', uid, 'urdfText length:', urdfText?.length, 'fileMap:', fileMap?.size)
 
         // 缓存检查：相同 urdfText 不重复加载
         if (!refs.current._urdfCache) refs.current._urdfCache = new Map()
         if (!refs.current._urdfInflight) refs.current._urdfInflight = new Map()
         if (!refs.current._urdfLoadSeq) refs.current._urdfLoadSeq = new Map()
+        if (!refs.current._urdfTextDedup) refs.current._urdfTextDedup = new Map()
 
-        const cacheKey = `${urdfText?.length}:${urdfText?.slice(0, 100)}`
-        if (refs.current._urdfCache.get(uid) === cacheKey && refs.current._urdfModels?.get(uid)?.isLoaded) {
-          return
+        const cacheKey = `${urdfText?.length}:${fileMap?.size ?? 0}`
+        const textHash = urdfText?.slice(0, 200) ?? ''
+        const dedupKey = textHash + ':' + (fileMap?.size ?? 0)
+
+        // urdfText 内容去重：5 秒内相同内容不重复加载
+        // 但如果这个 uid 之前没有模型（可能是刚勾选），则强制重新加载
+        const existingModel = refs.current._urdfModels?.get(uid)
+        if (refs.current._urdfTextDedup.has(dedupKey) && existingModel) {
+          const prev = refs.current._urdfTextDedup.get(dedupKey)
+          if (Date.now() - prev < 5000) {
+            console.log('[Viewport3D] dedup, skipping (same urdfText within 5s)')
+            return
+          }
         }
+        refs.current._urdfTextDedup.set(dedupKey, Date.now())
 
         const inflight = refs.current._urdfInflight.get(uid)
         if (inflight?.cacheKey === cacheKey) {
+          console.log('[Viewport3D] inflight, skipping')
           return
         }
 
@@ -759,6 +834,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         refs.current._urdfLoadSeq.set(uid, nextSeq)
         refs.current._urdfInflight.set(uid, { cacheKey, seq: nextSeq })
 
+        console.log('[Viewport3D] creating URDFModel')
         const { URDFModel } = await import('./urdf_loader/index.js')
         if (!refs.current._urdfModels) refs.current._urdfModels = new Map()
         const existing = refs.current._urdfModels.get(uid)
@@ -768,7 +844,9 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         refs.current._urdfModels.set(uid, model)
 
         try {
-          await model.loadFromString(urdfText)
+          console.log('[Viewport3D] calling model.loadFromString')
+          await model.loadFromString(urdfText, fileMap)
+          console.log('[Viewport3D] loadFromString complete')
 
           const latestSeq = refs.current._urdfLoadSeq.get(uid)
           if (latestSeq !== nextSeq) {
@@ -779,14 +857,25 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
 
           refs.current._urdfCache.set(uid, cacheKey)
 
+          // ── 加载新机器人时清理旧 TF 数据和显示状态 ─────────────────────
+          const newLinkNames = model.getLinkNames()
+          // 清理同一个 uid 之前的旧机器人 TF 帧
+          const oldLinkNames = refs.current._robotLinkNames?.get(uid)
+          if (oldLinkNames && oldLinkNames.length > 0) {
+            getTfManager().clearRobotFrames(oldLinkNames)
+          }
+          if (!refs.current._robotLinkNames) refs.current._robotLinkNames = new Map()
+          refs.current._robotLinkNames.set(uid, newLinkNames)
+
+          // 清理 TfDisplayManager 中的残留状态（hiddenFrames、_activeKeys 等）
+          getTfDisplayManager().resetState()
+
           // ── 订阅 /joint_states 驱动车轮 ──────────────────────────────
-          // 在 scene:ready 之后才能拿到 RosDataManager，所以用 setTimeout 延迟订阅
           setTimeout(() => {
             const rdm = getRosDataManager()
             if (!rdm) return
             rdm.subscribe('/joint_states', (msg) => {
               if (!msg?.name || !msg?.position) return
-              // 设置目标角度，由动画循环进行平滑插值
               msg.name.forEach((jointName, i) => {
                 if (!refs.current._jointSmooth) refs.current._jointSmooth = new Map()
                 let state = refs.current._jointSmooth.get(jointName)
@@ -799,10 +888,28 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
             })
           }, 100)
         } catch (e) {
+          console.error('[Viewport3D] loadFromString error:', e)
           if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
         } finally {
           const pending = refs.current._urdfInflight.get(uid)
           if (pending?.seq === nextSeq) refs.current._urdfInflight.delete(uid)
+        }
+      }),
+
+      SceneCommandBus.register('scene:urdf:hide', ({ uid }) => {
+        const model = refs.current._urdfModels?.get(uid)
+        if (model) model.setVisible(false)
+      }),
+
+      SceneCommandBus.register('scene:urdf:show', async ({ uid, urdfText }) => {
+        const model = refs.current._urdfModels?.get(uid)
+        if (model) {
+          model.setVisible(true)
+          return
+        }
+        // 模型不存在但有缓存，加载它
+        if (urdfText) {
+          SceneCommandBus.dispatch({ type: 'scene:urdf:load', uid, urdfText })
         }
       }),
 
@@ -827,6 +934,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       if (animId) cancelAnimationFrame(animId)
       ro.disconnect()
       cleanupImportedCloudDrop()
+      cleanupURDFDrop?.()
       refs.current.editPathGroup?.clear()
       unregs.forEach(fn => fn())
       refs.current.markerManager?.dispose()

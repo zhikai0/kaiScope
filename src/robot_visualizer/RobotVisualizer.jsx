@@ -178,10 +178,10 @@ export default function RobotVisualizer({ onBack }) {
 
   const isSingle = countLeaves(layout) === 1
 
-  const splitDown = () => {
+  const splitRight = () => {
     setLayout(prev => ({
       kind: 'split',
-      dir: 'v',
+      dir: 'h',
       ratio: 0.5,
       a: { ...prev, panelId: prev.panelId || 'root' },
       b: { kind: 'leaf', ptype: '3d', panelId: `panel-${Date.now()}` },
@@ -343,7 +343,7 @@ export default function RobotVisualizer({ onBack }) {
         <div className="view-sw">
           <button className="vsw on">3D</button>
           <div className="vsw-split-wrap">
-            <button className="vsw" onClick={splitDown} title="Split view">⊟</button>
+            <button className="vsw vsw-rotate" onClick={splitRight} title="Split right">⊟</button>
           </div>
         </div>
       )}

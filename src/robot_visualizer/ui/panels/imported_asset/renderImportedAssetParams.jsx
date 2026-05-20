@@ -1,11 +1,5 @@
 import { IMPORTED_ASSET_TYPE } from './importedAssetDisplay'
 
-const formatImportedAssetFileName = (name = '') => {
-  if (!name) return 'Choose local file'
-  if (name.length <= 17) return name
-  return `${name.slice(0, 7)}...${name.slice(-7)}`
-}
-
 export function renderImportedAssetParams({ d, PR, PNum, PSelect, PColor, onParamChange, onPickFile }) {
   if (d.id !== IMPORTED_ASSET_TYPE.id) return null
 
@@ -15,11 +9,38 @@ export function renderImportedAssetParams({ d, PR, PNum, PSelect, PColor, onPara
     onParamChange(key, Number.isFinite(value) ? value : fallback)
   }
 
+  const handleFileClick = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.pcd,.ply,.stl,.obj'
+    input.onchange = (e) => {
+      const file = e.target.files?.[0]
+      if (file) {
+        onPickFile(file)
+      }
+      e.target.value = ''
+    }
+    input.click()
+  }
+
   return (
     <>
-      <PR label="File" indent={1}>
-        <button className="lp-act-btn lp-file-btn" type="button" onClick={onPickFile} title={p.fileName || 'Choose local file'}>{formatImportedAssetFileName(p.fileName)}</button>
-      </PR>
+      <div className="pr-row" style={{ paddingLeft: `calc(0.6rem + 1rem)` }}>
+        <span className="pr-lbl">File</span>
+        <div className="pr-ctrl">
+          <div className="p-file-wrap">
+            <div className="p-file-row">
+              <input
+                className="p-file-input"
+                value={p.fileName || ''}
+                placeholder="Select .pcd/.ply/.stl/.obj file"
+                readOnly
+              />
+              <button className="p-file-btn" onClick={handleFileClick} title="Load file">···</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <PR label="Type" indent={1}><span className="pr-txt">{p.assetType || '—'}</span></PR>
       <PR label="Axes" indent={1}>
         <span className={`di-chk-box ${p.showAxes ? 'chk-on' : ''}`}

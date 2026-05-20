@@ -81,6 +81,9 @@ export class TfDisplayManager {
     /** @type {Set<string>} 当前场景中已创建的 arrow marker key */
     this._activeArrowKeys = new Set()
 
+    /** @type {Map<string, object>} 显示用的 TF 数据副本 */
+    this._displayFrames = new Map()
+
     /** @type {Set<function>} fixedFrame 变化监听器 */
     this._fixedFrameListeners = new Set()
 
@@ -99,6 +102,8 @@ export class TfDisplayManager {
         this._pendingReset = false
         this._lastSync = 0
       }
+      // 维护显示用的 TF 数据副本
+      this._syncDisplayFrames()
       this._sync()
     }
     getTfManager().on('update', this._onTfUpdate)
@@ -112,17 +117,59 @@ export class TfDisplayManager {
     }
     this._unregSceneReady = SceneCommandBus.register('scene:ready', this._onSceneReady)
 
-    // Reset 事件：不清空 marker，由 Viewport3D 处理场景清理
-    // 下一次 TfManager 'update' 到来时会自动重建所有 marker
+    // Reset 事件：清理所有状态，为新场景重建做准备
     this._unregSceneReset = SceneCommandBus.register('scene:reset', () => {
-      this._activeKeys.clear()
-      this._activeArrowKeys.clear()
-      this._pendingReset = true
+      this.resetState()
     })
 
     // 首次尝试自动设置根帧
     this._autoSetFixedFrame()
     this._sync()
+  }
+
+  /**
+   * 重置 TF 显示状态（切换机器人时调用）
+   * 清理 hiddenFrames、_activeKeys、_activeArrowKeys，并通知场景清理 marker
+   */
+  resetState() {
+    this.hiddenFrames.clear()
+    this._activeKeys.clear()
+    this._activeArrowKeys.clear()
+    this._pendingReset = true
+    // 通知场景清理所有 marker
+    SceneCommandBus.dispatch({ type: 'scene:marker:clearAll' })
+  }
+
+  /**
+   * 同步 TfManager 的 TF 数据到显示副本
+   * 只有 enabled=true 时才同步，enabled=false 时清空副本
+   */
+  _syncDisplayFrames() {
+    if (!this._displayFrames) this._displayFrames = new Map()
+    const tfTree = getTfManager().getTfTree()
+    if (!this.enabled || !tfTree.size) {
+      this._displayFrames.clear()
+      return
+    }
+    const tfMgr = getTfManager()
+    this._displayFrames.clear()
+    tfTree.forEach((node, frameName) => {
+      let translation, rotation
+      if (frameName === this.fixedFrame) {
+        translation = { x: 0, y: 0, z: 0 }
+        rotation = { x: 0, y: 0, z: 0, w: 1 }
+      } else {
+        const tf = tfMgr.lookupTransform(this.fixedFrame, frameName)
+        if (!tf) return
+        translation = tf.translation
+        rotation = tf.rotation
+      }
+      this._displayFrames.set(frameName, {
+        translation,
+        rotation,
+        parentFrame: node.parentFrame,
+      })
+    })
   }
 
   // ── 自动取根帧 ──────────────────────────────────────────────────────
@@ -273,50 +320,19 @@ export class TfDisplayManager {
       this._activeArrowKeys.forEach(key => {
         SceneCommandBus.dispatch({ type: 'scene:marker:visible', key, visible: true })
       })
-      // 立即同步确保 marker 重建
+      // 绕过节流，立即同步确保 marker 重建
       this._lastSync = 0
-      this._sync()
+      this._forceSync()
     }
     this._save()
   }
 
   /**
-   * 销毁，移除事件监听
+   * 强制同步（绕过节流限制）
+   * 用于 setEnabled(true) 后确保 marker 立即显示
    */
-  destroy() {
-    getTfManager().off('update', this._onTfUpdate)
-    if (this._unregSceneReady) this._unregSceneReady()
-    if (this._unregSceneReset) this._unregSceneReset()
-    this._fixedFrameListeners.clear()
-    this._clearAll()
-  }
-
-  // ── 内部逻辑 ────────────────────────────────────────────────────────
-
-  /** 将当前状态持久化到 localStorage */
-  _save() {
-    saveTfDispState({
-      settings:      this.settings,
-      hiddenFrames:  this.hiddenFrames,
-      fixedFrame:    this.fixedFrame,
-      enabled:       this.enabled,
-    })
-  }
-
-  /**
-   * 核心同步方法：从 TfManager 获取树，计算各 frame 绝对位姿，
-   * 驱动 scene marker 增删改
-   */
-  _sync() {
-    if (!this.enabled) {
-      this._clearAll()
-      return
-    }
-
-    // 节流：10Hz，避免 TF 高频更新导致每帧重建 marker
-    const now = Date.now()
-    if (this._lastSync && now - this._lastSync < 100) return
-    this._lastSync = now
+  _forceSync() {
+    if (!this.enabled) return
 
     const tfMgr  = getTfManager()
     const tfTree = tfMgr.getTfTree()
@@ -367,7 +383,158 @@ export class TfDisplayManager {
             },
           })
           this._activeKeys.add(key)
-          // 立即注册到平滑跟随系统，不用 setTimeout（避免 reset 时序问题）
+          // 创建后立即设置位置（axes marker 期望 {position, orientation} 格式）
+          SceneCommandBus.dispatch({
+            type: 'scene:marker:update',
+            key,
+            data: { position: translation, orientation: rotation },
+          })
+          // 注册到平滑跟随系统
+          SceneCommandBus.dispatch({ type: 'scene:tfMarker:register', key, frameName })
+        } else {
+          SceneCommandBus.dispatch({
+            type:    'scene:marker:labelVisible',
+            key,
+            visible: this.settings.showNames,
+          })
+        }
+      })
+    }
+
+    // ── Arrow markers（子 → 父）
+    if (this.settings.showArrows) {
+      tfTree.forEach((node, frameName) => {
+        if (!this.settings.allEnabled) return
+        if (this.hiddenFrames.has(frameName)) return
+        if (!node.parentFrame) return
+        if (this.hiddenFrames.has(node.parentFrame)) return
+
+        const childPos  = framePositions.get(frameName)
+        const parentPos = framePositions.get(node.parentFrame)
+        if (!childPos || !parentPos) return
+
+        const arrowKey = `tf_arrow_${frameName}`
+        wantedArrowKeys.add(arrowKey)
+
+        if (!this._activeArrowKeys.has(arrowKey)) {
+          SceneCommandBus.dispatch({
+            type:       'scene:marker:set',
+            markerType: 'arrow',
+            key:        arrowKey,
+            rosMsgType: '__arrow__',
+            options: {
+              scale:   this.settings.markerScale,
+              color:   0xffaa00,
+              opacity: 1.0,
+            },
+          })
+          this._activeArrowKeys.add(arrowKey)
+        }
+
+        SceneCommandBus.dispatch({
+          type: 'scene:marker:update',
+          key:  arrowKey,
+          data: { childPos, parentPos },
+        })
+      })
+    }
+
+    // 移除已消失的 axes marker
+    this._activeKeys.forEach(key => {
+      if (!wantedKeys.has(key)) {
+        SceneCommandBus.dispatch({ type: 'scene:marker:remove', key })
+        this._activeKeys.delete(key)
+      }
+    })
+
+    // 移除已消失或已关闭的 arrow marker
+    this._activeArrowKeys.forEach(key => {
+      if (!wantedArrowKeys.has(key)) {
+        SceneCommandBus.dispatch({ type: 'scene:marker:remove', key })
+        this._activeArrowKeys.delete(key)
+      }
+    })
+  }
+
+  /**
+   * 销毁，移除事件监听
+   */
+  destroy() {
+    getTfManager().off('update', this._onTfUpdate)
+    if (this._unregSceneReady) this._unregSceneReady()
+    if (this._unregSceneReset) this._unregSceneReset()
+    this._fixedFrameListeners.clear()
+    this._clearAll()
+  }
+
+  // ── 内部逻辑 ────────────────────────────────────────────────────────
+
+  /** 将当前状态持久化到 localStorage */
+  _save() {
+    saveTfDispState({
+      settings:      this.settings,
+      hiddenFrames:  this.hiddenFrames,
+      fixedFrame:    this.fixedFrame,
+      enabled:       this.enabled,
+    })
+  }
+
+  /**
+   * 核心同步方法：使用 _displayFrames 副本渲染 marker
+   */
+  _sync() {
+    if (!this.enabled) {
+      this._clearAll()
+      return
+    }
+
+    // 节流：10Hz，避免 TF 高频更新导致每帧重建 marker
+    const now = Date.now()
+    if (this._lastSync && now - this._lastSync < 100) return
+    this._lastSync = now
+
+    const wantedKeys      = new Set()
+    const wantedArrowKeys = new Set()
+
+    // ── 从显示副本获取 frame 数据 ────────────────────────────────
+    const framePositions = new Map()
+    const framePoses     = new Map()
+
+    this._displayFrames.forEach((data, frameName) => {
+      if (!this.settings.allEnabled) return
+      if (this.hiddenFrames.has(frameName)) return
+
+      framePositions.set(frameName, data.translation)
+      framePoses.set(frameName, { translation: data.translation, rotation: data.rotation })
+    })
+
+    // ── 第二遍：根据位姿数据创建/更新 Axes markers
+    if (this.settings.showAxes) {
+      framePoses.forEach(({ translation, rotation }, frameName) => {
+        const key = `tf_axes_${frameName}`
+        wantedKeys.add(key)
+
+        if (!this._activeKeys.has(key)) {
+          SceneCommandBus.dispatch({
+            type:       'scene:marker:set',
+            markerType: 'axes',
+            key,
+            rosMsgType: AXES_ROS_TYPE,
+            options: {
+              scale:     this.settings.markerScale,
+              label:     frameName,
+              showLabel: this.settings.showNames,
+              labelSize: 0.45 * this.settings.markerScale,
+            },
+          })
+          this._activeKeys.add(key)
+          // 创建后立即设置位置（axes marker 期望 {position, orientation} 格式）
+          SceneCommandBus.dispatch({
+            type: 'scene:marker:update',
+            key,
+            data: { position: translation, orientation: rotation },
+          })
+          // 立即注册到平滑跟随系统
           SceneCommandBus.dispatch({ type: 'scene:tfMarker:register', key, frameName })
         } else {
           SceneCommandBus.dispatch({
@@ -381,14 +548,14 @@ export class TfDisplayManager {
 
     // ── Arrow markers（子 → 父）──────────────────────────────────────
     if (this.settings.showArrows) {
-      tfTree.forEach((node, frameName) => {
+      this._displayFrames.forEach((data, frameName) => {
         if (!this.settings.allEnabled) return
         if (this.hiddenFrames.has(frameName)) return
-        if (!node.parentFrame) return  // 根帧无父节点
-        if (this.hiddenFrames.has(node.parentFrame)) return
+        if (!data.parentFrame) return  // 根帧无父节点
+        if (this.hiddenFrames.has(data.parentFrame)) return
 
         const childPos  = framePositions.get(frameName)
-        const parentPos = framePositions.get(node.parentFrame)
+        const parentPos = framePositions.get(data.parentFrame)
         if (!childPos || !parentPos) return
 
         const arrowKey = `tf_arrow_${frameName}`

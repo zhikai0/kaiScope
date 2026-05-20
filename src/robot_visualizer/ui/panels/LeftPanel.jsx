@@ -220,6 +220,96 @@ function TopicSelect({ value, onChange, liveTopics, allowedDisplayType }) {
   )
 }
 
+// ── RobotModel 参数行（source 选择 + topic/file 输入） ─────────────────
+function RobotModelParams({ display, liveChannels, onChange }) {
+  // source: 'topic' | 'file'
+  const source = display.params?.source || 'topic'
+  // topic 值
+  const topicValue = display.params?.topic || display.topic || ''
+  // file 值
+  const fileValue = display.params?.fileName || ''
+
+  const handleSourceChange = (e) => {
+    const newSource = e.target.value
+    if (newSource === 'file') {
+      // 切换到 file 时，清除 topic 并取消订阅
+      onChange({ source: 'file', topic: '' })
+    } else {
+      onChange({ source: 'topic' })
+    }
+  }
+
+  const handleTopicChange = (v) => {
+    onChange({ source, topic: v, fileName: '' })
+  }
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      onChange({ source, topic: '', fileName: file.name })
+    }
+    e.target.value = ''
+  }
+
+  const handleFileBtnClick = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = '.urdf,.xml'
+    input.onchange = handleFileChange
+    input.click()
+  }
+
+  return (
+    <>
+      {/* 第一行：Source 选择器 */}
+      <div className="pr-row" style={{ paddingLeft: `calc(0.6rem + 1rem)` }}>
+        <span className="pr-lbl">Source</span>
+        <div className="pr-ctrl">
+          <select
+            className="p-source-select"
+            value={source}
+            onChange={handleSourceChange}
+          >
+            <option value="topic">Topic</option>
+            <option value="file">File</option>
+          </select>
+        </div>
+      </div>
+
+      {/* 第二行：根据 source 显示 Topic 或 File 输入 */}
+      <div className="pr-row" style={{ paddingLeft: `calc(0.6rem + 1rem)` }}>
+        <span className="pr-lbl">{source === 'topic' ? 'Topic' : 'File'}</span>
+        <div className="pr-ctrl">
+          {/* Topic 输入（source=topic 时显示） */}
+          {source === 'topic' && (
+            <TopicSelect
+              value={topicValue}
+              liveTopics={liveChannels}
+              allowedDisplayType="robotmodel"
+              onChange={handleTopicChange}
+            />
+          )}
+
+          {/* File 输入（source=file 时显示） */}
+          {source === 'file' && (
+            <div className="p-file-wrap">
+              <div className="p-file-row">
+                <input
+                  className="p-file-input"
+                  value={fileValue}
+                  placeholder="Select .urdf or .xml file"
+                  readOnly
+                />
+                <button className="p-file-btn" onClick={handleFileBtnClick} title="Load URDF file">···</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ════════════════════════════════════════════════════════════════════════
 // ── DISPLAY NODE (list item with collapsible params) ───────────────────
 // ════════════════════════════════════════════════════════════════════════
@@ -589,7 +679,7 @@ function AddModal({ onAdd, onClose, liveChannels }) {
 const DEFAULT_DISPLAYS = [
   { uid:'global-1',  id:'global',     label:'Global Options',color:'#8e8e93', status:'ok',   checked:true,  icon:'⚙️', noChk:true, noDel:true },
   { uid:'grid-1',    id:'grid',       label:'Grid',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'⊞', params:{ color:'#a0a0a4', alpha:0.5, cellCount:10, cellSize:1 } },
-  { uid:'robot-1',   id:'robotmodel', label:'RobotModel',    color:'#0a84ff', status:'ok',   checked:true,  icon:'🤖', topic:'/robot_description', params:{ topic:'/robot_description' }},
+  { uid:'robot-1',   id:'robotmodel', label:'RobotModel',    color:'#0a84ff', status:'ok',   checked:true,  icon:'🤖', topic:'/robot_description', params:{ source:'topic', topic:'/robot_description' }},
   { uid:'tf-1',      id:'tf',         label:'TF',            color:'#ff9f0a', status:'ok',   checked:true,  icon:'📐' },
   { uid:'map-1',     id:'map',        label:'SatelliteMap',  color:'#34c759', status:'ok',   checked:false, icon:'🗺' },
   { uid:'path-1',    id:'path',       label:'Path',          color:'#4fc3f7', status:'ok',   checked:true,  icon:'〰', params:{ topic:'', color:'#19ff00', alpha:1, lineStyle:'lines' } },
@@ -639,22 +729,13 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
   // useRos 必须在这里调用，确保所有 useEffect 都能访问 rosMgr
   const { channels: liveChannels, mgr: rosMgr } = useRos()
 
-  // 检测 TF 勾选状态变化，控制订阅和数据
+  // 检测 TF 勾选状态变化，只控制场景 marker 的显示/隐藏
+  // TF 订阅始终保持，不受勾选框控制
   useEffect(() => {
     const tfDisp = displays.find(d => d.id === 'tf')
     const isChecked = tfDisp?.checked ?? false
-
-    if (!isChecked && rosMgr) {
-      // 取消勾选时：取消订阅 TF topic 并清空 TfManager 数据
-      rosMgr.setAutoSubscribeTF(false)
-      getTfManager().clear?.()
-      getTfDisplayManager().setEnabled(false)
-    } else if (isChecked && rosMgr) {
-      // 重新勾选时：恢复订阅
-      rosMgr.setAutoSubscribeTF(true)
-      getTfDisplayManager().setEnabled(true)
-    }
-  }, [displays, rosMgr])
+    getTfDisplayManager().setEnabled(isChecked)
+  }, [displays])
 
   useEffect(() => {
     const mgr = getTfManager()
@@ -667,16 +748,6 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     onUpdate()
     return () => mgr.off('update', onUpdate)
   }, [])
-
-  // TF 勾选框只控制场景 marker 的显示/隐藏，不控制订阅
-  // TF 数据始终保持订阅，由 RosDataManager 管理生命周期
-  useEffect(() => {
-    const tfEnabled = displays.some(item => item.id === 'tf' && item.checked)
-    getTfDisplayManager().setEnabled(tfEnabled)
-  }, [displays])
-
-  // 保持 TF 始终订阅（由 RosDataManager 管理）
-  // 注意：这里不再调用 rosMgr.setAutoSubscribeTF，因为它会清除旧数据
 
   // 初始化 & displays 变化时：同步所有 display 状态到 DisplayManager
   // 确保状态驱动：勾选状态、topic 等变更都能自动同步
@@ -742,6 +813,7 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     })
   }, [displays, rosMgr])
   // 自动绑定 RobotModel 话题：优先当前值；若默认值不存在则回退到首个可用 String topic
+  // 注意：source=file 时不自动绑定
   useEffect(() => {
     const robotTopics = (liveChannels || [])
       .filter(c => DISPLAY_SCHEMA_FILTER.robotmodel.includes(c.schemaName))
@@ -750,6 +822,8 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
 
     const robotDisp = displays.find(d => d.id === 'robotmodel')
     if (!robotDisp || !robotDisp.checked) return
+    // source=file 时不自动绑定 topic
+    if (robotDisp.params?.source === 'file') return
 
     const curTopic = robotDisp.params?.topic || robotDisp.topic || ''
     const nextTopic = robotTopics.includes(curTopic) ? curTopic : robotTopics[0]
@@ -836,10 +910,11 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
     const gridDisp = displays.find(d => d.id === 'grid')
     if (!gridDisp) return
     const { color, alpha, cellCount, cellSize } = gridDisp.params || {}
-    if (color    !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:color', color })
-    if (alpha    !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:alpha', alpha })
-    if (cellCount !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:count', count: cellCount })
-    if (cellSize  !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:size', size: cellSize })
+    if (color     !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:color',   color })
+    if (alpha     !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:alpha',   alpha })
+    if (cellCount !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:count',   count: cellCount })
+    if (cellSize  !== undefined) SceneCommandBus.dispatch({ type: 'scene:grid:size',    size: cellSize })
+    SceneCommandBus.dispatch({ type: 'scene:grid:visible', visible: !!gridDisp.checked })
   }, [])  // 仅初始化时执行一次，之后由各 onChange 处理
 
   useEffect(() => {
@@ -961,7 +1036,10 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
       ? `layout-image-${Date.now()}`
       : `${dt.id}-${Date.now()}`
     const initTopic = dt.topicOverride || ''
-    const initParams = initTopic ? { topic: initTopic } : {}
+    // robotmodel 默认使用 topic source
+    const initParams = dt.id === 'robotmodel'
+      ? { source: 'topic', topic: initTopic || '/robot_description' }
+      : (initTopic ? { topic: initTopic } : {})
     const newDisp = dt.id === 'importedasset'
       ? createImportedAssetDisplay({ uid })
       : {uid,...dt,checked:true,params:initParams}
@@ -1120,7 +1198,7 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
             setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, alpha:v}} : x))
             SceneCommandBus.dispatch({ type:'scene:grid:alpha', alpha:v })
           }}/></PR>
-        <PR label="Cell Count" indent={1}><PNum value={d.params?.cellCount??10} step={1} min={1} max={200}
+        <PR label="Cell Count" indent={1}><PNum value={d.params?.cellCount??10} step={1} min={1} max={1000000}
           onChange={e => {
             const v = parseInt(e.target.value)||10
             setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, params:{...x.params, cellCount:v}} : x))
@@ -1162,16 +1240,24 @@ export default function LeftPanel({ visible: visibleProp, onVisibleChange, onIma
         }}><option value="lines">Lines</option><option value="pointlines">PointLines</option></PSelect></PR>
       </>
     )
-    if (d.id==='robotmodel') return <PR label="Topic" indent={1}><TopicSelect
-      value={d.params?.topic || d.topic || '/robot_description'}
-      liveTopics={liveChannels}
-      allowedDisplayType="robotmodel"
-      onChange={v => {
-        getDisplayManager().updateParam(d.uid, 'topic', v)
-        setDisplays(prev => prev.map(x => x.uid===d.uid ? {...x, topic:v, params:{...x.params, topic:v}} : x))
-      }}
-    /></PR>
-    if (d.id==='tf') return <TfFrameTree/>
+    if (d.id==='robotmodel') return (
+      <RobotModelParams
+        display={d}
+        liveChannels={liveChannels}
+        onChange={(updates) => {
+          const newParams = { ...d.params, ...updates }
+          if (updates.topic !== undefined) {
+            getDisplayManager().updateParam(d.uid, 'topic', updates.topic)
+          }
+          setDisplays(prev => prev.map(x => x.uid === d.uid ? { ...x, topic: updates.topic || x.topic, params: newParams } : x))
+        }}
+      />
+    )
+    if (d.id==='tf') {
+      // TF 取消勾选时不显示参数面板
+      if (!d.checked) return <div className="lp-empty">TF disabled — check to enable.</div>
+      return <TfFrameTree/>
+    }
     if (d.id==='laserscan') return <PR label="Topic" indent={1}><TopicSelect value="/scan" liveTopics={liveChannels} allowedDisplayType="laserscan"/></PR>
     if (d.id==='pointcloud') return (
       <>

@@ -32,7 +32,7 @@ export class MeshLoader {
       if (ext === 'dae') return await this._loadCollada(url)
       if (ext === 'stl') {
         const geo  = await this._loadSTL(url)
-        const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x888888 }))
+        const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0x888888, shininess: 30 }))
         return mesh
       }
       return new THREE.Group()
@@ -44,24 +44,11 @@ export class MeshLoader {
 
   _loadCollada(proxyUrl) {
     return new Promise((resolve, reject) => {
-      // 压制 ColladaLoader 的 Z-UP 坐标系警告
-      const originalWarn = console.warn
-      console.warn = (...args) => {
-        if (args[0]?.toString?.().includes('Z-UP coordinate system')) return
-        originalWarn.apply(console, args)
-      }
-
       this._colladaLoader.load(
         proxyUrl,
-        (collada) => {
-          console.warn = originalWarn
-          resolve(collada.scene)
-        },
+        (collada) => resolve(collada.scene),
         undefined,
-        (err) => {
-          console.warn = originalWarn
-          reject(err)
-        }
+        (err) => reject(err)
       )
     })
   }
@@ -74,10 +61,7 @@ export class MeshLoader {
 
   _resolveUrl(filename) {
     if (filename.startsWith('file://')) {
-      const absPath = filename.replace('file://', '')
-      const installBase = '/home/zzk/workspace/wsl_ws/robot_ws/install/ackbot/share/ackbot/robots/salt_bot/assets'
-      const relPath = absPath.replace(installBase, '').replace(/^\//, '')
-      return `/urdf/${relPath}`
+      return `/urdf/file${filename.replace('file://', '')}`
     }
     if (filename.startsWith('package://')) {
       const rest     = filename.replace('package://', '')

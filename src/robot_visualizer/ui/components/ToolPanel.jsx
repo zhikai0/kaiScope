@@ -4,6 +4,93 @@ import { getRosDataManager } from '../../data/getRosDataManager'
 import './VirtualJoystick.css'
 import './ToolPanel.css'
 
+// ── Keyboard controller ──────────────────────────────────────────────────────
+function useKeyboardControl(enabled, setLeftY, setRightX, releaseLeft, releaseRight) {
+  const pressedKeys = useRef(new Set())
+
+  useEffect(() => {
+    if (!enabled) {
+      // 禁用时释放所有按键
+      pressedKeys.current.forEach(key => {
+        if (key === 'w' || key === 's' || key === 'arrowup' || key === 'arrowdown') releaseLeft()
+        if (key === 'a' || key === 'd' || key === 'arrowleft' || key === 'arrowright') releaseRight()
+      })
+      pressedKeys.current.clear()
+      return
+    }
+
+    const onKeyDown = (e) => {
+      // 忽略重复事件
+      if (e.repeat) return
+      const key = e.key.toLowerCase()
+      if (pressedKeys.current.has(key)) return
+      pressedKeys.current.add(key)
+
+      // W/↑ = 前进, S/↓ = 后退
+      if (key === 'w' || key === 'arrowup') {
+        e.preventDefault()
+        setLeftY(1)
+      } else if (key === 's' || key === 'arrowdown') {
+        e.preventDefault()
+        setLeftY(-1)
+      }
+      // A/← = 左转, D/→ = 右转
+      else if (key === 'a' || key === 'arrowleft') {
+        e.preventDefault()
+        setRightX(-1)
+      } else if (key === 'd' || key === 'arrowright') {
+        e.preventDefault()
+        setRightX(1)
+      }
+    }
+
+    const onKeyUp = (e) => {
+      const key = e.key.toLowerCase()
+      pressedKeys.current.delete(key)
+
+      if (key === 'w' || key === 'arrowup' || key === 's' || key === 'arrowdown') {
+        // 检查是否还有其他垂直方向的按键被按下
+        if (!pressedKeys.current.has('w') && !pressedKeys.current.has('s') &&
+            !pressedKeys.current.has('arrowup') && !pressedKeys.current.has('arrowdown')) {
+          releaseLeft()
+        } else if (pressedKeys.current.has('w') || pressedKeys.current.has('arrowup')) {
+          setLeftY(1)
+        } else if (pressedKeys.current.has('s') || pressedKeys.current.has('arrowdown')) {
+          setLeftY(-1)
+        }
+      }
+      if (key === 'a' || key === 'arrowleft' || key === 'd' || key === 'arrowright') {
+        if (!pressedKeys.current.has('a') && !pressedKeys.current.has('d') &&
+            !pressedKeys.current.has('arrowleft') && !pressedKeys.current.has('arrowright')) {
+          releaseRight()
+        } else if (pressedKeys.current.has('a') || pressedKeys.current.has('arrowleft')) {
+          setRightX(-1)
+        } else if (pressedKeys.current.has('d') || pressedKeys.current.has('arrowright')) {
+          setRightX(1)
+        }
+      }
+    }
+
+    const onBlur = () => {
+      // 窗口失去焦点时释放所有按键
+      pressedKeys.current.forEach(key => {
+        if (key === 'w' || key === 's' || key === 'arrowup' || key === 'arrowdown') releaseLeft()
+        if (key === 'a' || key === 'd' || key === 'arrowleft' || key === 'arrowright') releaseRight()
+      })
+      pressedKeys.current.clear()
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [enabled, setLeftY, setRightX, releaseLeft, releaseRight])
+}
+
 // ── ConfigPanel ──────────────────────────────────────────────────────────────
 function ConfigPanel({ onClose, onConfirm }) {
   const ctrl = getControlManager()
@@ -45,9 +132,11 @@ function ConfigPanel({ onClose, onConfirm }) {
 
 // ── SingleJoystick (inline) ──────────────────────────────────────────────────
 function SingleJoystick({ side, onMove, onRelease }) {
-  const baseRef  = useRef(null)
-  const knobRef  = useRef(null)
-  const activeRef = useRef(false)
+  const baseRef    = useRef(null)
+  const knobRef    = useRef(null)
+  const activeRef  = useRef(false)
+  const touchIdRef = useRef(null)
+
   const getCenter = () => {
     const r = baseRef.current.getBoundingClientRect()
     return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, radius: r.width / 2 }
@@ -66,10 +155,43 @@ function SingleJoystick({ side, onMove, onRelease }) {
     onMove?.({ x: nx, y: -ny })
   }, [onMove])
   const doRelease = useCallback(() => {
-    activeRef.current = false
+    activeRef.current  = false
+    touchIdRef.current = null
     if (knobRef.current) knobRef.current.style.transform = 'translate(-50%, -50%)'
     onRelease?.()
   }, [onRelease])
+
+  // 触摸事件（手机端）
+  const onTouchStart = (e) => {
+    const touch = e.changedTouches[0]
+    if (!touch) return
+    const rect = baseRef.current.getBoundingClientRect()
+    if (
+      touch.clientX >= rect.left && touch.clientX <= rect.right &&
+      touch.clientY >= rect.top  && touch.clientY <= rect.bottom
+    ) {
+      e.preventDefault()
+      if (activeRef.current) return
+      activeRef.current  = true
+      touchIdRef.current = touch.identifier
+      moveKnob(touch.clientX, touch.clientY)
+    }
+  }
+  const onTouchMove = (e) => {
+    if (!activeRef.current) return
+    e.preventDefault()
+    for (const t of e.changedTouches) {
+      if (t.identifier === touchIdRef.current) { moveKnob(t.clientX, t.clientY); break }
+    }
+  }
+  const onTouchEnd = (e) => {
+    if (!activeRef.current) return
+    for (const t of e.changedTouches) {
+      if (t.identifier === touchIdRef.current) { doRelease(); break }
+    }
+  }
+
+  // 鼠标事件（桌面端）
   const onMouseDown = (e) => {
     e.preventDefault()
     if (activeRef.current) return
@@ -83,7 +205,14 @@ function SingleJoystick({ side, onMove, onRelease }) {
     window.addEventListener('mouseleave', onML)
   }
   return (
-    <div className={`vj-base vj-${side}`} ref={baseRef} onMouseDown={onMouseDown}>
+    <div
+      className={`vj-base vj-${side}`}
+      ref={baseRef}
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      onMouseDown={onMouseDown}
+    >
       <div className="vj-ring"/><div className="vj-knob" ref={knobRef}/>
       <span className="vj-label">{side === 'left' ? '线速度' : '角速度'}</span>
     </div>
@@ -309,6 +438,15 @@ useEffect(() => {
   const releaseL  = useCallback(()    => ctrl.releaseLeft(),  [ctrl])
   const setRightX  = useCallback((x) => ctrl.setRightX(x),  [ctrl])
   const releaseR  = useCallback(()    => ctrl.releaseRight(), [ctrl])
+
+  // ── 键盘控制（WASD / 方向键）───────────────────────────────────────────
+  useKeyboardControl(
+    joystickOn && !editorMode,
+    setLeftY,
+    setRightX,
+    releaseL,
+    releaseR
+  )
 
   const goalPoseActive = !!goalposeMode
 

@@ -45,16 +45,10 @@ export class DisplayManager extends EventBus {
     // Used to replay URDF into newly mounted 3D scenes.
     this._lastRobotModel = new Map()
 
-    SceneCommandBus.on('scene:ready', () => {
-      this._replayRobotModelsToScene()
-    })
-    SceneCommandBus.on('scene:reset', () => {
-      this._replayRobotModelsToScene()
-    })
-    // 切换 IP 时清空 URDF 缓存
-    SceneCommandBus.on('connection:change', () => {
-      this._lastRobotModel.clear()
-    })
+    // 注意：不再监听 scene:reset，因为 URDF 加载应该只由以下触发：
+    // 1. /robot_description 消息到达且内容变化（_handleRobotModelMsg）
+    // 2. robotmodel 勾选时（toggleDisplay）
+    // reset 按钮重置状态时，机器人模型用缓存，不重新加载
   }
 
   // ── Connect to data layer ────────────────────────────────────────────
@@ -72,7 +66,11 @@ export class DisplayManager extends EventBus {
     this._dataMgr = mgr
     // Re-subscribe all active displays
     this._displays.forEach((disp) => {
-      if (disp.checked && disp.topic) this._ensureSubscribed(disp.topic, disp.uid)
+      if (disp.checked && disp.topic) {
+        // robotmodel source=file 时不订阅
+        if (disp.id === 'robotmodel' && disp.params?.source === 'file') return
+        this._ensureSubscribed(disp.topic, disp.uid)
+      }
     })
   }
 
@@ -91,7 +89,11 @@ export class DisplayManager extends EventBus {
     // robotmodel: 只在勾选时订阅/渲染，未勾选时等待用户勾选后再处理
     if (display.id === 'robotmodel') {
       if (display.checked !== false) {
-        if (display.topic) this._ensureSubscribed(display.topic, display.uid)
+        // source=file 时不订阅 topic
+        const source = display.params?.source || 'topic'
+        if (source === 'topic' && display.topic) {
+          this._ensureSubscribed(display.topic, display.uid)
+        }
         if (this._lastRobotModel.has(display.uid)) {
           const urdfText = this._lastRobotModel.get(display.uid)
           SceneCommandBus.dispatch({ type: 'scene:urdf:load', uid: display.uid, urdfText })
@@ -138,7 +140,9 @@ export class DisplayManager extends EventBus {
     const disp = this._displays.get(uid)
     if (!disp) return
     disp.checked = checked
-    if (disp.topic) {
+    // robotmodel source=file 时不订阅 topic
+    const isRobotFile = disp.id === 'robotmodel' && disp.params?.source === 'file'
+    if (disp.topic && !isRobotFile) {
       if (checked) this._ensureSubscribed(disp.topic, uid)
       else         this._maybeUnsubscribe(disp.topic, uid)
     }
@@ -146,15 +150,18 @@ export class DisplayManager extends EventBus {
     if (!checked) {
       SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `path_${uid}` })
       SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `pointcloud_${uid}` })
-      // robotmodel 取消勾选时销毁 URDF 模型
+      // robotmodel 取消勾选时只隐藏 URDF 模型（不销毁，以便复用）
       if (disp.id === 'robotmodel') {
-        SceneCommandBus.dispatch({ type: 'scene:urdf:dispose', uid })
+        SceneCommandBus.dispatch({ type: 'scene:urdf:hide', uid })
       }
     } else {
-      // robotmodel 勾选时立即重放缓存的 URDF（如果有）
-      if (disp.id === 'robotmodel' && this._lastRobotModel.has(uid)) {
-        const urdfText = this._lastRobotModel.get(uid)
-        SceneCommandBus.dispatch({ type: 'scene:urdf:load', uid, urdfText })
+      // robotmodel 勾选时：优先使用已有模型（通过 scene:urdf:show），如果没有模型但有缓存则加载
+      if (disp.id === 'robotmodel') {
+        if (this._lastRobotModel.has(uid)) {
+          const urdfText = this._lastRobotModel.get(uid)
+          // 发送 scene:urdf:show，让 Viewport3D 判断是否需要重新加载
+          SceneCommandBus.dispatch({ type: 'scene:urdf:show', uid, urdfText })
+        }
       }
     }
     this.emit('displays', { displays: this._getDisplayList() })
@@ -176,7 +183,10 @@ export class DisplayManager extends EventBus {
       SceneCommandBus.dispatch({ type: 'scene:marker:remove', key: `pointcloud_${uid}` })
       if (disp.checked) {
         if (prevTopic) this._maybeUnsubscribe(prevTopic, uid)
-        if (value) this._ensureSubscribed(value, uid)
+        // robotmodel source=file 时不订阅
+        if (!(disp.id === 'robotmodel' && disp.params?.source === 'file') && value) {
+          this._ensureSubscribed(value, uid)
+        }
       }
     }
     // Route param change to scene/map command bus
@@ -273,6 +283,10 @@ export class DisplayManager extends EventBus {
     // std_msgs/String: msg.data 是字符串
     const urdfText = typeof msg === 'string' ? msg : (msg?.data ?? '')
     if (!urdfText || !urdfText.includes('<robot')) return
+
+    // 内容相同则跳过（避免不必要的加载命令）
+    const prevUrdf = this._lastRobotModel.get(disp.uid)
+    if (prevUrdf === urdfText) return
 
     this._lastRobotModel.set(disp.uid, urdfText)
 

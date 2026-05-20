@@ -32,7 +32,7 @@ export function PanelCell({
         <div className="pcell-hdr">
           <span className="pcell-title">{pt.icon} {pt.label}</span>
           <div className="pcell-actions">
-            <button className="pcell-btn" title="Split right" onClick={onSplitH}>⊞</button>
+            <button className="pcell-btn pcell-btn-rotate" title="Split right" onClick={onSplitH}>⊟</button>
             <button className="pcell-btn" title="Split down" onClick={onSplitV}>⊟</button>
             <button className="pcell-btn" title="Change type" onMouseDown={e => { e.stopPropagation(); setMenuOpen(v => !v) }}>⋯</button>
             {canClose && <button className="pcell-btn close" title="Close" onClick={onClose}>✕</button>}

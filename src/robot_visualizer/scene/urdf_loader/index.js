@@ -24,6 +24,7 @@
  *     })
  *   })
  */
-export { URDFParser } from './URDFParser.js'
-export { MeshLoader }  from './MeshLoader.js'
-export { URDFModel }   from './URDFModel.js'
+export { URDFParser }    from './URDFParser.js'
+export { MeshLoader }     from './MeshLoader.js'
+export { URDFModel }      from './URDFModel.js'
+export { URDFFileLoader }  from './FileLoader.js'

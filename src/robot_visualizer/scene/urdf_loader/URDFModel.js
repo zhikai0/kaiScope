@@ -1,6 +1,8 @@
 import * as THREE from 'three'
-import { URDFParser } from './URDFParser.js'
-import { MeshLoader }  from './MeshLoader.js'
+import { URDFParser }   from './URDFParser.js'
+import { MeshLoader }    from './MeshLoader.js'
+import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js'
+import { STLLoader }     from 'three/examples/jsm/loaders/STLLoader.js'
 
 // 跨 URDFModel 实例共享的 MeshLoader 单例（缓存不随 dispose 丢失）
 let _sharedMeshLoader = null
@@ -23,17 +25,30 @@ export class URDFModel {
     this._parsed     = null
     this._loaded     = false
     this._axisCache  = new Map()   // jointName -> THREE.Vector3 (缓存轴向量)
+    this._jointBaseQuats = new Map()  // jointName -> THREE.Quaternion (初始 origin 旋转)
+    this._tempServerPath = null    // 拖拽模式下服务器临时路径
+    this._blobUrls       = []      // 记录创建的 blob: URLs，dispose 时 revoke
   }
 
   // ── Public API ───────────────────────────────────────────────────────
 
-  async loadFromString(urdfText) {
+  /**
+   * 从 URDF 字符串加载（需要外部提供 fileMap 以加载 mesh/texture 资产）。
+   * @param {string} urdfText  URDF XML 文本
+   * @param {Map<string, File>} [fileMap]  可选，拖拽文件夹时的本地文件映射
+   */
+  async loadFromString(urdfText, fileMap = null) {
     this._disposeModel()
+    this._tempServerPath = null
+
+    if (fileMap && fileMap.size > 0) {
+      await this._setupLocalMeshLoader(fileMap)
+      urdfText = this._rewriteUrdfPaths(urdfText)
+    }
 
     await URDFModel._yieldToMainThread()
     this._parsed = await URDFModel._parseWithWorker(urdfText)
 
-    // 预缓存关节轴向量
     this._parsed.joints.forEach((joint, name) => {
       this._axisCache.set(name, new THREE.Vector3(joint.axis.x, joint.axis.y, joint.axis.z))
     })
@@ -41,9 +56,49 @@ export class URDFModel {
     await URDFModel._yieldToMainThread()
     await this._build()
 
-    await URDFModel._yieldToMainThread()
     this._parent.add(this._root)
     this._loaded = true
+    console.log('[URDFModel] loadFromString complete')
+  }
+
+  /**
+   * 把拖拽的 File 对象转成 blob: URL，配置 BlobMeshLoader 直接从内存加载，
+   * 改写 URDF 路径指向 blob URL。完全不需要服务器写入！
+   * @param {Map<string, File>} fileMap  relativePath -> File
+   */
+  async _setupLocalMeshLoader(fileMap) {
+    const t0 = Date.now()
+
+    const keys = [...fileMap.keys()]
+    const prefix = keys.find(k => k.includes('/'))?.match(/^[^/]+\//)?.[0] || ''
+    this._folderPrefix = prefix
+
+    // 并行创建所有 blob URL
+    const entries = [...fileMap.entries()]
+    const results = await Promise.all(
+      entries.map(async ([relPath, file]) => {
+        const key = prefix ? relPath.replace(new RegExp('^' + prefix), '') : relPath
+        const blob    = new Blob([await file.arrayBuffer()], { type: file.type || 'application/octet-stream' })
+        const blobUrl = URL.createObjectURL(blob)
+        return [key, blobUrl]
+      })
+    )
+
+    this._blobMap = new Map(results.map(([k, u]) => [k, u]))
+    results.forEach(([, u]) => this._blobUrls.push(u))
+    console.log(`[URDFModel] created ${this._blobUrls.length} blob URLs in ${Date.now() - t0}ms`)
+
+    this._meshLoader    = new BlobMeshLoader(this._blobMap, _sharedMeshLoader)
+    this._serverUrl     = null
+    this._tempServerPath = null
+  }
+
+  /**
+   * 改写 URDF 中的 package:// 和 file:// 路径为 blob URL。
+   * blob URL 模式不需要改写（BlobMeshLoader._resolveUrl 直接查 Map），直接返回原文本。
+   */
+  _rewriteUrdfPaths(urdfText) {
+    return urdfText
   }
 
   /**
@@ -64,10 +119,17 @@ export class URDFModel {
     if (!pivot) return
     const axis = this._axisCache.get(jointName)
     if (!axis) return
-    pivot.setRotationFromAxisAngle(axis, angle)
+    const axisQuat = new THREE.Quaternion().setFromAxisAngle(axis, angle)
+    // 正确顺序：先应用 origin 旋转（baseQuat），再应用关节旋转（axisQuat）
+    pivot.quaternion.copy(this._jointBaseQuats.get(jointName)).multiply(axisQuat)
   }
 
   get isLoaded() { return this._loaded }
+
+  /** 获取所有 link 名称 */
+  getLinkNames() {
+    return Array.from(this._linkNodes.keys())
+  }
 
   // ── Build ────────────────────────────────────────────────────────────
 
@@ -99,7 +161,7 @@ export class URDFModel {
       }
     }
 
-    await this._runWithConcurrency(visualTasks, 4)
+    await this._runWithConcurrency(visualTasks, 8)
   }
 
   _attachChildren(parentLinkName, joints) {
@@ -108,6 +170,8 @@ export class URDFModel {
       const pivot = new THREE.Group()
       pivot.name  = `joint_${jName}`
       URDFModel._applyOrigin(pivot, joint.origin)
+      // 保存初始 origin 旋转，供 setJointAngle 叠加使用
+      this._jointBaseQuats.set(jName, pivot.quaternion.clone())
       const childNode  = this._linkNodes.get(joint.child)
       const parentNode = this._linkNodes.get(parentLinkName)
       if (childNode)  pivot.add(childNode)
@@ -134,8 +198,14 @@ export class URDFModel {
     }
     if (!obj) return
 
-    // Apply material from URDF <material> element
-    this._applyMaterial(obj, material)
+    // Apply material from URDF <material> element.
+    // 只有 URDF 明确内联了 texture/color 时才覆盖 DAE 的材质；
+    // 如果 URDF 只引用了全局 material name（无内联属性），保留 DAE 原有材质。
+    if (material && (material.texture || material.color)) {
+      this._applyMaterial(obj, material)
+    } else {
+      // console.log(`[_addVisual] no inline material, keeping DAE texture`)
+    }
 
     URDFModel._applyOrigin(obj, origin)
     linkNode.add(obj)
@@ -148,16 +218,17 @@ export class URDFModel {
       if (!mesh.isMesh) return
       const tex = mat.texture ? this._loadTexture(mat.texture) : null
       if (tex) {
-        // Lambert 材质 - 匹配 Rviz 的哑光效果
-        mesh.material = new THREE.MeshLambertMaterial({
+        mesh.material = new THREE.MeshPhongMaterial({
           map: tex,
+          shininess: 30,
         })
       } else if (mat.color) {
-        const { r, g, b, a = 1 } = mat.color
-        mesh.material = new THREE.MeshLambertMaterial({
+        const { r, g, b, a } = mat.color
+        mesh.material = new THREE.MeshPhongMaterial({
           color: new THREE.Color(r, g, b),
           transparent: a < 1,
           opacity: a,
+          shininess: 30,
         })
       }
     }
@@ -168,12 +239,15 @@ export class URDFModel {
 
   _loadTexture(filename) {
     const url = this._meshLoader._resolveUrl(filename)
+    if (!url) return null
+
     const loader = new THREE.TextureLoader()
     try {
       const tex = loader.load(url)
       tex.colorSpace = THREE.SRGBColorSpace
       return tex
     } catch (e) {
+      console.warn(`[URDFModel] Failed to load texture ${filename} (url: ${url})`)
       return null
     }
   }
@@ -194,7 +268,7 @@ export class URDFModel {
 
   static async _parseWithWorker(urdfText) {
     try {
-      const worker = new Worker(new URL('./URDFParseWorker.js', import.meta.url), { type: 'module' })
+      const worker = new Worker(new URL('./URDFParser.js', import.meta.url), { type: 'module' })
       const payload = await new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           reject(new Error('URDF parse worker timeout'))
@@ -237,13 +311,14 @@ export class URDFModel {
     if (!origin) return
     const { xyz, rpy } = origin
     obj.position.set(xyz.x, xyz.y, xyz.z)
-    const euler = new THREE.Euler(rpy.r, rpy.p, rpy.y, 'XYZ')
+    // URDF rpy 是 roll-pitch-yaw，对应 ZYX 旋转顺序（先 Z=Yaw，再 Y=Pitch，最后 X=Roll）
+    const euler = new THREE.Euler(rpy.r, rpy.p, rpy.y, 'ZYX')
     obj.quaternion.setFromEuler(euler)
   }
 
   static _buildPrimitive(geometry) {
     let geo
-    const mat = new THREE.MeshStandardMaterial({ color: 0x888888 })
+    const mat = new THREE.MeshPhongMaterial({ color: 0x888888, shininess: 30 })
     if (geometry.type === 'box') {
       const s = geometry.size
       geo = new THREE.BoxGeometry(s.x, s.y, s.z)
@@ -257,6 +332,10 @@ export class URDFModel {
     return new THREE.Mesh(geo, mat)
   }
 
+  setVisible(visible) {
+    if (this._root) this._root.visible = visible
+  }
+
   // ── Dispose ──────────────────────────────────────────────────────────
 
   _disposeModel() {
@@ -268,10 +347,164 @@ export class URDFModel {
     })
     this._linkNodes.clear()
     this._jointNodes.clear()
+    this._jointBaseQuats.clear()
     this._loaded = false
+
+    // 释放 blob: URLs，释放浏览器内存
+    for (const url of this._blobUrls) URL.revokeObjectURL(url)
+    this._blobUrls = []
   }
 
   dispose() {
     this._disposeModel()
+    this._meshLoader?.dispose?.()
+  }
+}
+
+/**
+ * BlobMeshLoader — 拖拽场景下直接从浏览器内存（blob: URL）加载资产。
+ * 不需要服务器写入文件，消除网络上传/下载和磁盘 I/O。
+ */
+class BlobMeshLoader {
+  constructor(blobMap, sharedMeshLoader = null) {
+    this._blobMap    = blobMap
+    this._shared     = sharedMeshLoader
+    this._colladaCache = new Map()
+    this._blobUrls   = []
+  }
+
+  async load(urdfFilename) {
+    const url = this._resolveUrl(urdfFilename)
+    return this._doLoad(url, urdfFilename)
+  }
+
+  _resolveUrl(filename) {
+    // 1. 已经是 blob: 或 http(s):// URL，直接返回
+    if (filename.startsWith('blob:') || filename.startsWith('http')) return filename
+
+    // 2. package://pkg/path → 提取 path 部分（去掉 robots/<folder>/ 前缀）查 blobMap
+    if (filename.startsWith('package://')) {
+      const rest     = filename.replace('package://', '')
+      const slashIdx = rest.indexOf('/')
+      const relPath  = rest.slice(slashIdx + 1)
+      // 去掉 robots/<folder>/ 前缀（如 "robots/salt_bot/assets/meshes/foo.dae" → "assets/meshes/foo.dae"）
+      const cleaned = relPath.replace(/^robots\/[^/]+\//, '')
+      return this._blobMap.get(cleaned) || this._blobMap.get(relPath) || filename
+    }
+
+    // 3. file://$(find pkg)/robots/pkg/... → 提取 assets/... 查 blobMap
+    const m = filename.match(/\$\([^)]+\)\/robots\/[^/]+\/(.+)/)
+    if (m) return this._blobMap.get(m[1]) || filename
+
+    // 4. 相对路径：直接查 blobMap
+    return this._blobMap.get(filename) || filename
+  }
+
+  async _doLoad(url, originalFilename) {
+    const ext = originalFilename.split('.').pop().toLowerCase()
+
+    if (ext === 'dae') {
+      if (this._colladaCache.has(url)) return this._colladaCache.get(url).clone(true)
+      const { scene, texMap } = await this._loadCollada(url)
+      this._colladaCache.set(url, scene)
+      return scene.clone(true)
+    }
+
+    if (ext === 'stl') {
+      const geo  = await this._loadSTL(url)
+      return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0x888888, shininess: 30 }))
+    }
+
+    return new THREE.Group()
+  }
+
+  /**
+   * 加载 DAE，DAE 的 <init_from> 只保留文件名（不填 blob URL），
+   * 返回场景和纹理映射（filename -> THREE.Texture）。
+   * ColladaLoader 加载完毕后，把材质贴图替换成预加载的 Texture。
+   */
+  _loadCollada(daeBlobUrl) {
+    return new Promise((resolve, reject) => {
+      const self = this
+
+      // 找到 DAE 的相对目录（用于 resolve ../.. 路径）
+      let daeRelDir = ''
+      for (const [relPath, blobUrl] of self._blobMap.entries()) {
+        if (blobUrl === daeBlobUrl) {
+          const lastSlash = relPath.lastIndexOf('/')
+          daeRelDir = lastSlash >= 0 ? relPath.slice(0, lastSlash + 1) : ''
+          break
+        }
+      }
+
+      // 把 <init_from> 替换成完整 blob URL（绝对 URL 不会被 TextureLoader 拼接）
+      fetch(daeBlobUrl)
+        .then(r => r.text())
+        .then(xmlText => {
+          const rewritten = xmlText.replace(/<init_from>([^<]*)<\/init_from>/g, (match, raw) => {
+            const resolved = self._resolveTexPath(raw.trim(), daeRelDir)
+            return `<init_from>${resolved}</init_from>`
+          })
+          const newBlob    = new Blob([rewritten], { type: 'model/vnd.collada+xml' })
+          const newBlobUrl = URL.createObjectURL(newBlob)
+          self._blobUrls.push(newBlobUrl)
+
+          const loader = new ColladaLoader()
+          loader.setPath('')
+          loader.load(newBlobUrl, (collada) => resolve({ scene: collada.scene }), undefined, reject)
+        })
+        .catch(reject)
+    })
+  }
+
+  /** 把含 ../.. 的纹理路径 resolve 成 blob URL */
+  _resolveTexPath(raw, daeRelDir) {
+    if (!raw) return raw
+    if (raw.startsWith('blob:') || raw.startsWith('http')) return raw
+
+    const lastSlash = raw.lastIndexOf('/')
+    const dir  = lastSlash >= 0 ? raw.slice(0, lastSlash) : ''
+    const file = lastSlash >= 0 ? raw.slice(lastSlash + 1) : raw
+
+    let resolvedDir = daeRelDir
+    for (const part of dir.split('/').filter(Boolean)) {
+      if (part === '..') {
+        const idx = resolvedDir.lastIndexOf('/', resolvedDir.length - 2)
+        resolvedDir = idx >= 0 ? resolvedDir.slice(0, idx + 1) : ''
+      } else if (part !== '.') {
+        resolvedDir += part + '/'
+      }
+    }
+
+    // 在 blobMap 里查找匹配
+    for (const [relPath, blobUrl] of this._blobMap.entries()) {
+      const relFile = relPath.split('/').pop()
+      if (relFile === file && (relPath.startsWith(resolvedDir) || resolvedDir === '')) {
+        return blobUrl
+      }
+    }
+    // 兜底：直接文件名
+    for (const [relPath, blobUrl] of this._blobMap.entries()) {
+      if (relPath.split('/').pop() === file) return blobUrl
+    }
+    return raw
+  }
+
+  _replaceTex(mat, prop, raw, daeRelDir) {
+    // 不再需要（纹理已通过 blob URL 正确加载）
+  }
+
+  _loadSTL(blobUrl) {
+    return new Promise((resolve, reject) => {
+      const loader = new STLLoader()
+      loader.load(blobUrl, resolve, undefined, reject)
+    })
+  }
+
+  dispose() {
+    this._colladaCache.clear()
+    for (const url of this._blobUrls) URL.revokeObjectURL(url)
+    this._blobUrls = []
+    if (this._shared) this._shared.dispose()
   }
 }

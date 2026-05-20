@@ -229,6 +229,52 @@
 .p-select option { background: #252528; color: rgba(235,235,245,0.95); }
 .p-select:focus  { border-color: var(--accent); }
 
+/* ── Source 选择器（robotModel 专用） ───────────────────────────────── */
+.p-source-select {
+  flex: 1; min-width: 0;
+  height: var(--ctrl-h);
+  background: var(--ctrl-bg);
+  border: 0.5px solid var(--ctrl-bd); border-radius: var(--ctrl-r);
+  color: rgba(235,235,245,0.95);
+  font-family: var(--font-ui); font-size: var(--ctrl-fs);
+  padding: 0 1.5rem 0 0.4rem;
+  outline: none; cursor: pointer;
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23aeaeb2' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 0.4rem center;
+  transition: border-color 0.15s;
+}
+.p-source-select:focus { border-color: var(--accent); }
+.p-source-select option { background: #252528; color: rgba(235,235,245,0.95); }
+
+/* ── File 选择按钮（点击打开系统文件选择器） ──────────────────────── */
+.p-file-wrap { position: relative; flex: 1; min-width: 0; }
+.p-file-row {
+  display: flex; align-items: center;
+  height: var(--ctrl-h);
+  background: var(--ctrl-bg);
+  border: 0.5px solid var(--ctrl-bd); border-radius: var(--ctrl-r);
+  overflow: hidden; transition: border-color 0.15s;
+}
+.p-file-row:focus-within { border-color: var(--accent); }
+.p-file-input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: rgba(235,235,245,0.95); font-family: var(--font-mono);
+  font-size: 0.68rem; padding: 0 0.4rem; height: 100%; min-width: 0;
+}
+.p-file-input::placeholder { color: var(--text-3); }
+/* 三个点按钮 - 正方形 */
+.p-file-btn {
+  background: transparent; border: none;
+  border-left: 0.5px solid rgba(255,255,255,0.1);
+  color: var(--text-2); font-size: 1rem; padding: 0 0.4rem;
+  cursor: pointer; height: 100%; display: flex; align-items: center; justify-content: center;
+  transition: color 0.12s, background 0.12s; flex-shrink: 0;
+  font-weight: 300; letter-spacing: 0.05em;
+  width: var(--ctrl-h); box-sizing: border-box;
+}
+.p-file-btn:hover { color: var(--text-0); background: rgba(255,255,255,0.06); }
+
 /* ── 数字输入框 ──────────────────────────────────────────────────────── */
 .p-num {
   flex: 1; min-width: 0;

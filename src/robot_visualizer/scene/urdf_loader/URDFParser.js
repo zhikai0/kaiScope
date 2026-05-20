@@ -9,136 +9,157 @@
  * }
  */
 export class URDFParser {
-  /**
-   * 解析 URDF XML 字符串
-   * @param {string} urdfText  URDF XML 文本
-   * @returns {{ name, links, joints }}
-   */
-  static parse(urdfText) {
-    const parser = new DOMParser()
-    const doc    = parser.parseFromString(urdfText, 'text/xml')
-    const robot  = doc.querySelector('robot')
-    if (!robot) throw new Error('[URDFParser] No <robot> element found')
-
-    const name   = robot.getAttribute('name') || 'robot'
-    const links  = new Map()
-    const joints = new Map()
-
-    // ── 全局 material 定义收集 ──────────────────────────────────────────
-    // key: material name, value: { texture, color }
-    const globalMaterials = new Map()
-    Array.from(robot.children).filter(el => el.tagName === 'material').forEach(el => {
-      const matName = el.getAttribute('name')
-      if (matName) {
-        globalMaterials.set(matName, {
-          name:    matName,
-          texture: el.querySelector('texture')?.getAttribute('filename') || null,
-          color:   URDFParser._parseColor(el.querySelector('color')),
-        })
-      }
-    })
-
-    // ── Links — 只取 robot 直接子元素 ─────────────────────────────────
-    Array.from(robot.children).filter(el => el.tagName === 'link').forEach(el => {
-      const linkName = el.getAttribute('name')
-      const visuals  = []
-
-      el.querySelectorAll('visual').forEach(vis => {
-        const origin   = URDFParser._parseOrigin(vis.querySelector('origin'))
-        const geomEl   = vis.querySelector('geometry')
-        const geometry = URDFParser._parseGeometry(geomEl)
-
-        // Material: 优先用 visual 内联定义，否则用 name 查找全局定义
-        const matEl = vis.querySelector('material')
-        let material = null
-        if (matEl) {
-          const inlineTexture = matEl.querySelector('texture')?.getAttribute('filename') || null
-          const inlineColor   = URDFParser._parseColor(matEl.querySelector('color'))
-          if (inlineTexture || inlineColor) {
-            // 内联定义优先
-            material = {
-              name:    matEl.getAttribute('name') || '',
-              texture: inlineTexture,
-              color:   inlineColor,
-            }
-          } else {
-            // 通过 name 查找全局定义
-            const matName = matEl.getAttribute('name')
-            if (matName) material = globalMaterials.get(matName) || null
-          }
+    /**
+     * 解析 URDF XML 字符串
+     * @param {string} urdfText  URDF XML 文本
+     * @returns {{ name, links, joints }}
+     */
+    static parse(urdfText) {
+      const parser = new DOMParser()
+      const doc    = parser.parseFromString(urdfText, 'text/xml')
+      const robot  = doc.querySelector('robot')
+      if (!robot) throw new Error('[URDFParser] No <robot> element found')
+  
+      const name   = robot.getAttribute('name') || 'robot'
+      const links  = new Map()
+      const joints = new Map()
+  
+      // ── 全局 material 定义收集 ──────────────────────────────────────────
+      // key: material name, value: { texture, color }
+      const globalMaterials = new Map()
+      Array.from(robot.children).filter(el => el.tagName === 'material').forEach(el => {
+        const matName = el.getAttribute('name')
+        if (matName) {
+          globalMaterials.set(matName, {
+            name:    matName,
+            texture: el.querySelector('texture')?.getAttribute('filename') || null,
+            color:   URDFParser._parseColor(el.querySelector('color')),
+          })
         }
-
-        if (geometry) visuals.push({ origin, geometry, material })
       })
-
-      links.set(linkName, { name: linkName, visuals })
-    })
-
-    // ── Joints — 只取 robot 直接子元素，避免 <gazebo> 内重复 joint ────
-    Array.from(robot.children).filter(el => el.tagName === 'joint').forEach(el => {
-      const jointName = el.getAttribute('name')
-      const type      = el.getAttribute('type') || 'fixed'
-      const parent    = el.querySelector('parent')?.getAttribute('link') || ''
-      const child     = el.querySelector('child')?.getAttribute('link')  || ''
-      const origin    = URDFParser._parseOrigin(el.querySelector('origin'))
-      const axisEl    = el.querySelector('axis')
-      const axis      = axisEl ? URDFParser._parseXYZ(axisEl.getAttribute('xyz')) : { x:0, y:0, z:1 }
-      const limitEl   = el.querySelector('limit')
-      const limit     = limitEl ? {
-        lower:    parseFloat(limitEl.getAttribute('lower') ?? '-Infinity'),
-        upper:    parseFloat(limitEl.getAttribute('upper') ?? 'Infinity'),
-        effort:   parseFloat(limitEl.getAttribute('effort') ?? '0'),
-        velocity: parseFloat(limitEl.getAttribute('velocity') ?? '0'),
-      } : null
-
-      joints.set(jointName, { name: jointName, type, parent, child, origin, axis, limit })
-    })
-
-    return { name, links, joints }
-  }
-
-  // ── Helpers ────────────────────────────────────────────────────────
-
-  static _parseOrigin(el) {
-    if (!el) return { xyz: {x:0,y:0,z:0}, rpy: {r:0,p:0,y:0} }
-    const xyz = URDFParser._parseXYZ(el.getAttribute('xyz'))
-    const rpy = URDFParser._parseRPY(el.getAttribute('rpy'))
-    return { xyz, rpy }
-  }
-
-  static _parseXYZ(str) {
-    if (!str) return { x:0, y:0, z:0 }
-    const [x=0, y=0, z=0] = str.trim().split(/\s+/).map(Number)
-    return { x, y, z }
-  }
-
-  static _parseRPY(str) {
-    if (!str) return { r:0, p:0, y:0 }
-    const [r=0, p=0, y=0] = str.trim().split(/\s+/).map(Number)
-    return { r, p, y }
-  }
-
-  static _parseColor(el) {
-    if (!el) return null
-    const rgba = el.getAttribute('rgba')
-    if (!rgba) return null
-    const [r=1,g=1,b=1,a=1] = rgba.trim().split(/\s+/).map(Number)
-    return { r, g, b, a }
-  }
-
-  static _parseGeometry(el) {
-    if (!el) return null
-    const mesh = el.querySelector('mesh')
-    if (mesh) return { type: 'mesh', filename: mesh.getAttribute('filename') || '', scale: URDFParser._parseXYZ(mesh.getAttribute('scale')) }
-    const box = el.querySelector('box')
-    if (box) {
-      const s = URDFParser._parseXYZ(box.getAttribute('size'))
-      return { type: 'box', size: s }
+  
+      // ── Links — 只取 robot 直接子元素 ─────────────────────────────────
+      Array.from(robot.children).filter(el => el.tagName === 'link').forEach(el => {
+        const linkName = el.getAttribute('name')
+        const visuals  = []
+  
+        el.querySelectorAll('visual').forEach(vis => {
+          const origin   = URDFParser._parseOrigin(vis.querySelector('origin'))
+          const geomEl   = vis.querySelector('geometry')
+          const geometry = URDFParser._parseGeometry(geomEl)
+  
+          // Material: 优先用 visual 内联定义，否则用 name 查找全局定义
+          const matEl = vis.querySelector('material')
+          let material = null
+          if (matEl) {
+            const inlineTexture = matEl.querySelector('texture')?.getAttribute('filename') || null
+            const inlineColor   = URDFParser._parseColor(matEl.querySelector('color'))
+            if (inlineTexture || inlineColor) {
+              // 内联定义优先
+              material = {
+                name:    matEl.getAttribute('name') || '',
+                texture: inlineTexture,
+                color:   inlineColor,
+              }
+            } else {
+              // 通过 name 查找全局定义
+              const matName = matEl.getAttribute('name')
+              if (matName) material = globalMaterials.get(matName) || null
+            }
+          }
+  
+          if (geometry) visuals.push({ origin, geometry, material })
+        })
+  
+        links.set(linkName, { name: linkName, visuals })
+      })
+  
+      // ── Joints — 只取 robot 直接子元素，避免 <gazebo> 内重复 joint ────
+      Array.from(robot.children).filter(el => el.tagName === 'joint').forEach(el => {
+        const jointName = el.getAttribute('name')
+        const type      = el.getAttribute('type') || 'fixed'
+        const parent    = el.querySelector('parent')?.getAttribute('link') || ''
+        const child     = el.querySelector('child')?.getAttribute('link')  || ''
+        const origin    = URDFParser._parseOrigin(el.querySelector('origin'))
+        const axisEl    = el.querySelector('axis')
+        const axis      = axisEl ? URDFParser._parseXYZ(axisEl.getAttribute('xyz')) : { x:0, y:0, z:1 }
+        const limitEl   = el.querySelector('limit')
+        const limit     = limitEl ? {
+          lower:    parseFloat(limitEl.getAttribute('lower') ?? '-Infinity'),
+          upper:    parseFloat(limitEl.getAttribute('upper') ?? 'Infinity'),
+          effort:   parseFloat(limitEl.getAttribute('effort') ?? '0'),
+          velocity: parseFloat(limitEl.getAttribute('velocity') ?? '0'),
+        } : null
+  
+        joints.set(jointName, { name: jointName, type, parent, child, origin, axis, limit })
+      })
+  
+      return { name, links, joints }
     }
-    const cyl = el.querySelector('cylinder')
-    if (cyl) return { type: 'cylinder', radius: parseFloat(cyl.getAttribute('radius')||0), length: parseFloat(cyl.getAttribute('length')||0) }
-    const sph = el.querySelector('sphere')
-    if (sph) return { type: 'sphere', radius: parseFloat(sph.getAttribute('radius')||0) }
-    return null
+  
+    // ── Helpers ────────────────────────────────────────────────────────
+  
+    static _parseOrigin(el) {
+      if (!el) return { xyz: {x:0,y:0,z:0}, rpy: {r:0,p:0,y:0} }
+      const xyz = URDFParser._parseXYZ(el.getAttribute('xyz'))
+      const rpy = URDFParser._parseRPY(el.getAttribute('rpy'))
+      return { xyz, rpy }
+    }
+  
+    static _parseXYZ(str) {
+      if (!str) return { x:0, y:0, z:0 }
+      const [x=0, y=0, z=0] = str.trim().split(/\s+/).map(Number)
+      return { x, y, z }
+    }
+  
+    static _parseRPY(str) {
+      if (!str) return { r:0, p:0, y:0 }
+      const [r=0, p=0, y=0] = str.trim().split(/\s+/).map(Number)
+      return { r, p, y }
+    }
+  
+    static _parseColor(el) {
+      if (!el) return null
+      const rgba = el.getAttribute('rgba')
+      if (!rgba) return null
+      const [r=1,g=1,b=1,a=1] = rgba.trim().split(/\s+/).map(Number)
+      return { r, g, b, a }
+    }
+  
+    static _parseGeometry(el) {
+      if (!el) return null
+      const mesh = el.querySelector('mesh')
+      if (mesh) return { type: 'mesh', filename: mesh.getAttribute('filename') || '', scale: URDFParser._parseXYZ(mesh.getAttribute('scale')) }
+      const box = el.querySelector('box')
+      if (box) {
+        const s = URDFParser._parseXYZ(box.getAttribute('size'))
+        return { type: 'box', size: s }
+      }
+      const cyl = el.querySelector('cylinder')
+      if (cyl) return { type: 'cylinder', radius: parseFloat(cyl.getAttribute('radius')||0), length: parseFloat(cyl.getAttribute('length')||0) }
+      const sph = el.querySelector('sphere')
+      if (sph) return { type: 'sphere', radius: parseFloat(sph.getAttribute('radius')||0) }
+      return null
+    }
+}
+
+// ── Web Worker 入口（供 URDFModel 使用）───────────────────────────────────
+// 在 Worker 环境中，self === globalThis
+if (typeof self !== 'undefined') {
+  self.onmessage = (e) => {
+    try {
+      const urdfText = e.data?.urdfText || ''
+      const parsed = URDFParser.parse(urdfText)
+
+      const payload = {
+        name: parsed.name,
+        links: Array.from(parsed.links.entries()),
+        joints: Array.from(parsed.joints.entries()),
+      }
+
+      self.postMessage({ ok: true, data: payload })
+    } catch (err) {
+      self.postMessage({ ok: false, error: err?.message || String(err) })
+    }
   }
 }

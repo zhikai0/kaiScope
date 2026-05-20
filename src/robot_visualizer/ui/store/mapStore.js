@@ -15,9 +15,9 @@ export const useMapStore = create(
       mapOpacity: 1.0,
 
       // GNSS location & zoom
-      longitude: 119.04855,
-      latitude:   37.1624,
-      zoom:       17,
+      longitude: 119.03473497,
+      latitude:   37.1630715395,
+      zoom:       18,
 
       // ── Actions ────────────────────────────────────────────────────────────
       setMapEnabled:  (v) => set({ mapEnabled: v }),

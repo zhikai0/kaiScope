@@ -212,6 +212,17 @@ select option {
   color: var(--red);
 }
 
+.pcell-btn-rotate {
+  transform: rotate(90deg);
+  transform-origin: 50% 50%;
+}
+.pcell-btn-rotate:hover {
+  background: rgba(255,255,255,0.12);
+  color: var(--text-0);
+  transform: rotate(90deg);
+  transform-origin: 50% 50%;
+}
+
 .pcell-menu {
   position: absolute;
   top: 100%;
@@ -375,4 +386,17 @@ select option {
   border-color: var(--accent);
   box-shadow: 0 0.1rem 0.5rem rgba(10,132,255,0.4);
 }
-.vsw-split-wrap { position: relative; }
+.vsw-split-wrap { position: relative; display: flex; gap: 0.25rem; }
+.vsw-rotate {
+  transform: rotate(90deg);
+  transform-origin: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.vsw-rotate:hover {
+  transform: rotate(90deg);
+  transform-origin: center;
+  color: var(--text-0);
+  background: rgba(255,255,255,0.07);
+}

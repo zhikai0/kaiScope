@@ -441,7 +441,7 @@
   display: flex;
   justify-content: space-between;
   padding: 0 2rem;
-  z-index: 155;
+  z-index: 165;   /* 比 .tp-fixed-btn (160) 更高，确保摇杆在按钮上层 */
   pointer-events: none;
 }
 .tp-vj-overlay .vj-base,

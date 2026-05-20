@@ -3,7 +3,8 @@
   left: 1.5rem;
   top: 50%;
   transform: translateY(-50%);
-  width: 280px;
+  width: min(280px, calc(100vw - 3rem));
+  max-height: calc(100vh - 6rem);
   background: rgba(20, 22, 30, 0.92);
   backdrop-filter: blur(12px);
   border: 0.5px solid rgba(255,255,255,0.08);
@@ -15,6 +16,8 @@
   font-family: 'Segoe UI', system-ui, sans-serif;
   overflow: hidden;
   animation: ep-slide-in 0.2s ease-out;
+  /* 新增：响应式缩放 */
+  font-size: clamp(0.7rem, 1.5vw, 0.82rem);
 }
 
 @keyframes ep-slide-in {
@@ -112,6 +115,7 @@
   font-size: 0.72rem;
   padding: 0.28rem 0.45rem;
   transition: border-color 0.15s;
+  min-width: 0;
 }
 .ep-input:focus { outline: none; border-color: rgba(255,159,10,0.4); }
 
@@ -340,6 +344,126 @@
   margin: 0.2rem 0;
 }
 
+.ep-total-points {
+  font-size: 0.6rem;
+  color: var(--text-2, #6b7280);
+  margin-left: 0.3rem;
+}
+
+/* ── 段落列表 ────────────────────────────────────────────────────────────── */
+.ep-segment-item {
+  background: rgba(255,255,255,0.03);
+  border: 0.5px solid rgba(255,255,255,0.06);
+  border-radius: 0.3rem;
+  margin-bottom: 0.3rem;
+  overflow: hidden;
+}
+.ep-segment-item.editing {
+  border-color: rgba(255,159,10,0.4);
+  background: rgba(255,159,10,0.06);
+}
+.ep-segment-header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.4rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.ep-segment-header:hover {
+  background: rgba(255,255,255,0.04);
+}
+.ep-segment-toggle {
+  font-size: 0.6rem;
+  color: var(--text-2, #6b7280);
+  cursor: pointer;
+  width: 0.8rem;
+  text-align: center;
+}
+.ep-segment-label {
+  font-size: 0.68rem;
+  font-weight: 500;
+  color: var(--text-1, #9ca3af);
+}
+.ep-segment-type {
+  font-size: 0.6rem;
+  color: var(--text-2, #6b7280);
+  padding: 0.1rem 0.25rem;
+  background: rgba(255,255,255,0.05);
+  border-radius: 0.2rem;
+}
+.ep-segment-points {
+  font-size: 0.6rem;
+  color: var(--text-2, #6b7280);
+  margin-left: auto;
+}
+.ep-segment-del {
+  background: none;
+  border: none;
+  color: var(--text-2, #6b7280);
+  cursor: pointer;
+  font-size: 0.65rem;
+  padding: 0.1rem 0.2rem;
+  border-radius: 0.2rem;
+  opacity: 0;
+  transition: all 0.15s;
+}
+.ep-segment-header:hover .ep-segment-del {
+  opacity: 1;
+}
+.ep-segment-del:hover {
+  background: rgba(255,69,58,0.2);
+  color: #ff453a;
+}
+.ep-segment-detail {
+  padding: 0.4rem 0.5rem;
+  border-top: 0.5px solid rgba(255,255,255,0.05);
+  background: rgba(0,0,0,0.15);
+}
+.ep-segment-coords {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.6rem;
+  color: var(--text-2, #6b7280);
+  font-family: 'Courier New', monospace;
+  margin-bottom: 0.3rem;
+}
+.ep-segment-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.ep-segment-edit .ep-field-row {
+  padding: 0;
+}
+.ep-btn-xs {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.62rem;
+}
+
+/* ── 当前编辑状态 ──────────────────────────────────────────────────────── */
+.ep-current-edit {
+  padding: 0.3rem 0.4rem;
+  background: rgba(255,159,10,0.08);
+  border: 0.5px solid rgba(255,159,10,0.2);
+  border-radius: 0.3rem;
+  margin-bottom: 0.4rem;
+}
+.ep-current-edit .ep-label {
+  font-size: 0.65rem;
+  color: #ff9f0a;
+}
+.ep-editing-segment, .ep-new-segment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ep-editing-segment .ep-btn-ghost, .ep-new-segment .ep-btn-ghost {
+  font-size: 0.6rem;
+  padding: 0.1rem 0.3rem;
+}
+
 /* ── Import / Export ─────────────────────────────────────────────────────── */
 .ep-import-export {
   display: flex;
@@ -356,4 +480,26 @@
   text-align: center;
   border-top: 0.5px solid rgba(255,255,255,0.05);
   opacity: 0.7;
+}
+
+/* ── 响应式：小屏幕适配 ──────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .ep-panel {
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+    max-height: calc(100vh - 4rem);
+  }
+
+  .ep-points-list {
+    max-height: 120px;
+  }
+}
+
+@media (max-height: 500px) {
+  .ep-panel {
+    top: 0.5rem;
+    transform: none;
+    max-height: calc(100vh - 1rem);
+  }
 }

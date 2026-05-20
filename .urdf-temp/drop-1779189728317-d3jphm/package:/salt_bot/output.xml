@@ -1,0 +1,107 @@
+<mujoco model="salt_ackbot">
+  <option iterations="50" timestep="0.001" solver="PGS" gravity="0 0 -9.81" />
+
+  <compiler angle="radian" meshdir="assets/meshes" eulerseq="zyx" autolimits="true" />
+
+  <default>
+    <joint limited="true" damping="0.01" armature="0.01" frictionloss="0.01" />
+    <geom condim="4" contype="1" conaffinity="15" friction="0.9 0.05 0.05" solref="0.001 2" />
+    <motor ctrllimited="true" />
+    <equality solref="0.001 2" />
+    <default class="visualgeom">
+      <geom material="visualgeom" condim="1" contype="0" conaffinity="15" />
+    </default>
+  </default>
+
+  <worldbody>
+    <!-- 调暗的主光源 -->
+    <light directional="true" diffuse="0.3 0.3 0.3" specular="0.08 0.08 0.08" pos="0 0 5.0" dir="0 0 -1" castshadow="false" />
+    <light directional="true" diffuse="0.4 0.4 0.4" specular="0.15 0.15 0.15" pos="0 0 4" dir="0 0 -1" />
+    
+    <!-- 地面 -->
+    <geom name="ground" type="plane" pos="0 0 0" size="100 100 0.001" quat="1 0 0 0" material="world_material" condim="3" conaffinity="15" />
+    <!-- <geom name="ground" type="mesh" mesh="world" pos="0 0 0" quat="1 0 0 0" material="world_material" condim="3" conaffinity="15" /> -->
+    <!-- <geom name="ground" type="hfield" hfield="world_hfield" pos="-400 -500 -25" quat="1 0 0 0" material="world_material" condim="3" conaffinity="15" /> -->
+
+    <!-- 相机 -->
+    <camera name="fixed" pos="0 -3.0 5" xyaxes="1 0 0 0 0 1" />
+    <camera name="track" mode="trackcom" pos="-2 0 10" xyaxes="1 0 0 0 1 0" />
+    
+    <!-- 车身 -->
+    <body name="root" pos="0 0 0">
+      <freejoint name="root" />
+      <site name="imu" size="0.01" pos="0 0 0" />
+      <inertial pos="0.2 0 0.2" mass="2000" diaginertia="50 200 200" />
+      <geom size="1.5 0.7 0.4" pos="0.8 0 1.2" type="box" contype="1" conaffinity="15" density="2000" group="1" material="invisible"/>
+      <geom type="mesh" mesh="vehicle" pos="0 0 0" quat="1 0 0 0" material="vehicle_material"  contype="0" conaffinity="0" density="0" group="0" />
+      <body name="rear_left_wheel" pos="0 0.63 0.7">
+        <joint name="rear_left_wheel_joint" type="hinge" pos="0 0 0" axis="0 1 0" limited="false" damping="0.5" />
+        <geom size="0.7 0.15" quat="0.707105 0.707108 0 0" type="cylinder" contype="1" conaffinity="15" density="1000" group="1" material="invisible" friction="0.8 0.1 0.05" />
+        <geom type="mesh" mesh="rear_left_wheel" material="vehicle_material" pos="0 -0.63 -0.7" quat="1 0 0 0" contype="0" conaffinity="0" density="0" group="0" />
+      </body>
+      <body name="rear_right_wheel" pos="0 -0.63 0.7">
+        <joint name="rear_right_wheel_joint" type="hinge" pos="0 0 0" axis="0 1 0" limited="false" damping="0.5" />
+        <geom size="0.7 0.15" quat="0.707105 0.707108 0 0" type="cylinder" contype="1" conaffinity="15" density="1000" group="1" material="invisible" friction="0.8 0.1 0.05" />
+        <geom type="mesh" mesh="rear_right_wheel" material="vehicle_material" pos="0 0.63 -0.7" quat="1 0 0 0" contype="0" conaffinity="0" density="0" group="0" />
+      </body>
+      <body name="front_left_wheel" pos="1.6 0.64 0.613">
+        <joint name="front_left_steering_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="-0.5236 0.5236" limited="true" damping="0.1" />
+        <joint name="front_left_wheel_joint" type="hinge" pos="0 0 0" axis="0 1 0" limited="false" damping="0.1" />
+        <geom size="0.613 0.15" quat="0.707105 0.707108 0 0" type="cylinder" contype="1" conaffinity="15" density="1000" group="1" material="invisible" friction="0.8 0.1 0.05" />
+        <geom type="mesh" mesh="front_left_wheel" material="vehicle_material" pos="-1.6 -0.64 -0.613" quat="1 0 0 0" contype="0" conaffinity="0" density="0" group="0" />
+      </body>
+      <body name="front_right_wheel" pos="1.6 -0.64 0.613">
+        <joint name="front_right_steering_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="-0.5236 0.5236" limited="true" damping="0.1" />
+        <joint name="front_right_wheel_joint" type="hinge" pos="0 0 0" axis="0 1 0" limited="false" damping="0.5" />
+        <geom size="0.613 0.15" quat="0.707105 0.707108 0 0" type="cylinder" contype="1" conaffinity="15" density="1000" group="1" material="invisible" friction="0.8 0.1 0.05" />
+        <geom type="mesh" mesh="front_right_wheel" material="vehicle_material" pos="-1.6 0.64 -0.613" quat="1 0 0 0" contype="0" conaffinity="0" density="0" group="0" />
+      </body>
+      <!-- 耙子 -->
+      <body name="rake" pos="-0.7 0 0 ">
+        <geom name="rake_visual" type="mesh" mesh="rake_mesh" pos="0 0 0" group="0" material="rake_material" />
+      </body>
+    </body>
+  </worldbody>
+
+  <asset>
+    <!-- <texture name="texplane" type="2d" builtin="checker" rgb1=".0 .0 .0" rgb2=".8 .8 .8" width="100" height="100" /> -->
+    <!-- <material name="matplane" reflectance="0." texture="texplane" texrepeat="1 1" texuniform="true" /> -->
+    <material name="visualgeom" rgba="0.5 0.9 0.2 1" />
+    <material name="invisible" rgba="0 0 0 0" />
+    <!-- 盐矿材质 -->
+    <texture name="world_texture" type="2d" file="assets/material/world.png" />
+    <material name="world_material" texture="world_texture" />
+    <!-- 车身材质 -->
+    <texture name="vehicle_texture" type="2d" file="assets/material/vehicle.png" />
+    <material name="vehicle_material" texture="vehicle_texture" />
+    <!-- 耙子材质 -->
+    <texture name="rake_texture" type="2d" file="assets/material/rake.png" />
+    <material name="rake_material" texture="rake_texture" />
+    
+    <!-- 添加mesh资源 -->
+    <mesh name="world" file="obj/world.obj" />
+    <mesh name="vehicle" file="obj/vehicle.obj" />
+    <mesh name="rake" file="obj/rake.obj" />
+    <mesh name="rear_left_wheel" file="obj/rear_left_wheel.obj" />
+    <mesh name="rear_right_wheel" file="obj/rear_right_wheel.obj" />
+    <mesh name="front_left_wheel" file="obj/front_left_wheel.obj" />
+    <mesh name="front_right_wheel" file="obj/front_right_wheel.obj" />
+    <mesh name="rake_mesh" file="obj/rake.obj" />
+    
+    <!-- 添加hfield资源 -->
+    <hfield name="world_hfield" file="obj/world_heightfield.bin" nrow="512" ncol="512" size="600 1000 45 0.1" />
+  </asset>
+
+  <actuator>
+    <!-- 后轮驱动 -->
+    <velocity name="rear_left_wheel_joint" joint="rear_left_wheel_joint" kv="1000" ctrlrange="-100 100" gear="10" />
+    <velocity name="rear_right_wheel_joint" joint="rear_right_wheel_joint" kv="1000" ctrlrange="-100 100" gear="10" />
+    <!-- 前轮驱动 -->
+    <velocity name="front_left_wheel_joint" joint="front_left_wheel_joint" kv="1000" ctrlrange="-100 100" gear="10" />
+    <velocity name="front_right_wheel_joint" joint="front_right_wheel_joint" kv="1000" ctrlrange="-100 100" gear="10" />
+    <!-- 独立转向控制 -->
+    <position name="front_left_steering_joint" joint="front_left_steering_joint" kp="2000"  ctrlrange="-1 1" gear="1"/>
+    <position name="front_right_steering_joint" joint="front_right_steering_joint" kp="2000" ctrlrange="-1 1" gear="1"/>
+  </actuator>
+
+</mujoco>

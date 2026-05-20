@@ -67,10 +67,38 @@ export class TfManager extends EventTarget {
     if (changed) this._emit('update', { frames: this.getFrames() })
   }
 
+  /**
+   * 清理指定的旧机器人 TF 帧
+   * @param {string[]} frameNames 要清理的帧名称数组
+   */
+  clearRobotFrames(frameNames) {
+    if (!frameNames || !frameNames.length) return
+    const toDelete = new Set(frameNames)
+    let changed = false
+    this._tf.forEach((_value, child) => {
+      if (toDelete.has(child)) {
+        this._tf.delete(child)
+        changed = true
+      }
+    })
+    if (changed) this._emit('update', { frames: this.getFrames() })
+  }
+
   // ── Ingestion ─────────────────────────────────────────────────────────
   processTFMessage(tfMsg, isStatic = false) {
     const tfs = tfMsg?.transforms || []
     if (!tfs.length) return
+    // 收到 static TF 时，只覆盖相同 child_frame_id 的旧 TF，不清除其他 static TF
+    // 这样可以保留之前收到的其他 static 变换
+    if (isStatic) {
+      tfs.forEach(tf => {
+        const child = tf.child_frame_id
+        if (!child) return
+        const existing = this._tf.get(child)
+        // 只清除冲突的旧 static TF（相同 child_frame_id）
+        if (existing?.isStatic) this._tf.delete(child)
+      })
+    }
     tfs.forEach(tf => {
       const child  = tf.child_frame_id
       const parent = tf.header?.frame_id || 'world'
@@ -84,6 +112,7 @@ export class TfManager extends EventTarget {
         rotation:    tf.transform?.rotation    || { x:0, y:0, z:0, w:1 },
         stamp,
         isStatic,
+        lastRxMs: Date.now(),
       })
     })
     this._emit('update', { frames: this.getFrames() })
@@ -200,7 +229,7 @@ export class TfManager extends EventTarget {
     const now = Date.now()
     let changed = false
     this._tf.forEach((v, child) => {
-      if (!v.isStatic && now - v.stamp > this._staleMs) {
+      if (!v.isStatic && v.lastRxMs && now - v.lastRxMs > this._staleMs) {
         this._tf.delete(child)
         changed = true
       }
