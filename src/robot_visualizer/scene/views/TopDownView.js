@@ -41,7 +41,9 @@ export class TopDownView extends BaseView {
     const restoredRel = this.restoreRelativePose(this._camera, this._controls, this._target, { useTargetOrientation: false })
     const restoredAbs = restoredRel ? true : this.restoreAbsolutePose(this._camera, this._controls)
 
-    if (!restoredRel && !restoredAbs && this._target) {
+    // 只有当没有任何保存的状态时，才执行初始化
+    // _hasAbsPose=true 表示相机位姿已从 localStorage 恢复
+    if (!restoredRel && !restoredAbs && this._target && !this._hasAbsPose) {
       const targetPos = new THREE.Vector3()
       this._target.getWorldPosition(targetPos)
       this._controls.target.copy(targetPos)

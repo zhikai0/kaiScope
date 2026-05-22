@@ -58,7 +58,6 @@ export class URDFModel {
 
     this._parent.add(this._root)
     this._loaded = true
-    console.log('[URDFModel] loadFromString complete')
   }
 
   /**

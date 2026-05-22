@@ -44,6 +44,16 @@ export class CameraViews {
 
   get mode() { return this._mode }
 
+  /**
+   * 当从 localStorage 恢复相机位姿时，通知 CameraViews 将该位姿同步到当前活跃 View。
+   * 这样后续 activate() 时就不会覆盖已恢复的位置。
+   */
+  syncFromExternalCamera(camera, controls) {
+    if (!this._active) return
+    // 保存为绝对位姿，这样后续 activate/update 时会识别到已有状态
+    this._active.saveAbsolutePose(camera, controls)
+  }
+
   update() {
     this._active?.update()
   }

@@ -404,6 +404,23 @@ export class DisplayManager extends EventBus {
       lineStyle: markerStyle.lineStyle,
     })
   }
+  /**
+   * Restore all cached robot models into a newly mounted scene.
+   * Called by Viewport3D after its scene command handlers register,
+   * so the new scene receives scene:urdf:load commands for every cached model.
+   */
+  restoreAllCachedModels() {
+    this._lastRobotModel.forEach((urdfText, uid) => {
+      const disp = this._displays.get(uid)
+      if (disp?.checked) {
+        SceneCommandBus.dispatch({
+          type:     'scene:urdf:restore',
+          uid,
+          urdfText,
+        })
+      }
+    })
+  }
 }
 
 // ── 内部四元数旋转工具（避免依赖 TfManager 内部函数） ──────────────────

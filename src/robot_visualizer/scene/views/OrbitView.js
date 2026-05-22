@@ -26,7 +26,9 @@ export class OrbitView extends BaseView {
     const restoredRel = this.restoreRelativePose(this._camera, this._controls, this._target, { useTargetOrientation: false })
     const restoredAbs = restoredRel ? true : this.restoreAbsolutePose(this._camera, this._controls)
 
-    if (!restoredRel && !restoredAbs && this._target) {
+    // 只有当没有任何保存的状态时，才执行初始化
+    // _hasAbsPose=true 表示相机位姿已从 localStorage 恢复
+    if (!restoredRel && !restoredAbs && this._target && !this._hasAbsPose) {
       const targetPos = new THREE.Vector3()
       this._target.getWorldPosition(targetPos)
       this._controls.target.copy(targetPos)
@@ -46,6 +48,13 @@ export class OrbitView extends BaseView {
     }
   }
 
+  /**
+   * 标记相机位置已从 localStorage 恢复，后续 update 不应覆盖它
+   */
+  markRestoredFromPersisted() {
+    this._initializedFromTarget = true
+  }
+
   snapshot() {
     this.saveAbsolutePose(this._camera, this._controls)
     this.saveRelativePose(this._camera, this._controls, this._target, { useTargetOrientation: false })
@@ -59,7 +68,9 @@ export class OrbitView extends BaseView {
     const p = new THREE.Vector3()
     this._target.getWorldPosition(p)
 
-    if (!this._initializedFromTarget && !this._hasRelativePose && !this._hasAbsPose) {
+    // 只有当没有任何保存的状态时，才执行初始化
+    // _hasAbsPose=true 表示相机位姿已从某处恢复（localStorage 或其他）
+    if (!this._hasAbsPose && !this._hasRelativePose) {
       this._controls.target.copy(p)
       this._camera.position.copy(p.clone().add(this._offset))
       this._controls.update()

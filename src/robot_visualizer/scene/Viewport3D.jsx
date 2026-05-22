@@ -13,10 +13,12 @@ import { MapLayer } from './map/MapLayer'
 import { getTfManager } from '../data/TfManager'
 import { getRosDataManager } from '../data/getRosDataManager'
 import { getTfDisplayManager } from '../manager/TfDisplayManager'
+import { getDisplayManager } from '../manager/DisplayManager'
 import { calcAlpha } from '../utils/interpolation.js'
 import './Viewport3D.css'
 
 const VIEWPORT_KEY_PREFIX = 'kaiscope-viewport-'
+const DISPLAYS_KEY = 'kaiscope-displays'
 
 const DEFAULT_VIEWPORT_STATE = {
   cameraPos: null,
@@ -24,6 +26,11 @@ const DEFAULT_VIEWPORT_STATE = {
   viewMode: 'orbit',
   at: 0,
 }
+
+// 默认 displays 配置（与 LeftPanel 中的 DEFAULT_DISPLAYS 一致）
+const DEFAULT_DISPLAYS = [
+  { uid:'grid-1', id:'grid', params:{ color:'#a0a0a4', alpha:0.5, cellCount:10, cellSize:1 } },
+]
 
 function loadViewportState(panelId) {
   try {
@@ -37,6 +44,21 @@ function saveViewportState(panelId, state) {
   try {
     localStorage.setItem(VIEWPORT_KEY_PREFIX + panelId, JSON.stringify(state))
   } catch {}
+}
+
+/**
+ * 从 localStorage 读取 displays 中的 grid 参数
+ */
+function loadGridParams() {
+  try {
+    const raw = localStorage.getItem(DISPLAYS_KEY)
+    if (raw) {
+      const displays = JSON.parse(raw)
+      const gridDisp = displays?.find?.(d => d.id === 'grid')
+      if (gridDisp?.params) return gridDisp.params
+    }
+  } catch {}
+  return DEFAULT_DISPLAYS[0].params
 }
 
 export default function Viewport3D({ panelId = 'main-3d', editorMode = false, onEditorComplete, goalposeMode = false, onGoalposeComplete }) {
@@ -144,8 +166,17 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       grid.material = mat
       return grid
     }
-    const GRID_COLOR = 0xa0a0a4
-    const gridMaj = makeUnlitGridHelper(10, 10, GRID_COLOR)
+
+    // 从 localStorage 读取 grid 配置（与其他 Viewport3D 实例一致）
+    const gridParams = loadGridParams()
+    const gridColor = new THREE.Color(gridParams.color ?? '#a0a0a4')
+    const gridAlpha = gridParams.alpha ?? 0.5
+    const gridCellCount = gridParams.cellCount ?? 10
+    const gridCellSize = gridParams.cellSize ?? 1
+    const gridTotalSize = gridCellSize * gridCellCount
+
+    const gridMaj = makeUnlitGridHelper(gridTotalSize, gridCellCount, gridColor)
+    gridMaj.material.opacity = gridAlpha
     scene.add(gridMaj)
     // THREE.AxesHelper 已由 AxesMarker 系统替代，此处不再添加
 
@@ -165,6 +196,13 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
 
     // ── CameraViews ──────────────────────────────────────────────────
     const cameraViews = new CameraViews(camera, controls, scene)
+
+    // 如果有从 localStorage 恢复的相机位姿，同步到 CameraViews
+    // 这样后续 activate() 时不会覆盖已恢复的 world-space 绝对位姿
+    if (persistedState.current.cameraPos && persistedState.current.cameraTarget) {
+      cameraViews.syncFromExternalCamera(camera, controls)
+    }
+
     const viewTargetProxy = new THREE.Object3D()
     rosRoot.add(viewTargetProxy)
     const viewFollowHz = 18
@@ -328,7 +366,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       })
     }
 
-    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, editPathGroup, importedGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: 10, _gridCellSize: 1, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot, _tfMarkerKeys: new Set(), _jointSmooth: new Map(), _robotLinkNames: new Map() }
+    refs.current = { renderer, scene, camera, controls, trajGroup, histGroup, editPathGroup, importedGroup, gridMaj, gridMin: null, markerManager, rosRoot, mapLayer, _gridCount: gridCellCount, _gridCellSize: gridCellSize, cameraViews, _viewMode: 'orbit', _viewTargetLink: 'base_link', _viewTargetProxy: viewTargetProxy, getPrimaryRobotRoot, _tfMarkerKeys: new Set(), _jointSmooth: new Map(), _robotLinkNames: new Map() }
     const importedAssetStore = getImportedAssetStore()
     syncImportedAssets(importedAssetStore.getAssets())
     const unsubscribeImportedAssets = importedAssetStore.onChange(syncImportedAssets)
@@ -595,10 +633,12 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         // uid format: 'grid-1', 'path-1', 'tf-1', etc.
         const id = uid.replace(/-\d+$/, '')
         const r  = refs.current
+        console.log(`[Viewport3D ${panelId}] scene:display:toggle uid=${uid} (id=${id}), visible=${visible}`)
         if (id === 'grid')       { if (r.gridMaj) r.gridMaj.visible = visible }
         else if (id === 'path')  { r.markerManager?.get('trajectory')?.setVisible?.(visible) }
         else if (id === 'history'){ r.markerManager?.get('history')?.setVisible?.(visible) }
         else if (id === 'robotmodel') {
+          console.log(`[Viewport3D ${panelId}] setting all urdf models visible=${visible}`)
           r._urdfModels?.forEach(model => {
             if (model._root) model._root.visible = visible
           })
@@ -960,7 +1000,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         try {
           console.log('[Viewport3D] calling model.loadFromString')
           await model.loadFromString(urdfText, fileMap)
-          console.log('[Viewport3D] loadFromString complete')
+          console.log('[Viewport3D] loadFromString complete, _root visible:', model._root?.visible)
 
           const latestSeq = refs.current._urdfLoadSeq.get(uid)
           if (latestSeq !== nextSeq) {
@@ -1011,12 +1051,14 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       }),
 
       SceneCommandBus.register('scene:urdf:hide', ({ uid }) => {
+        console.log(`[Viewport3D ${panelId}] scene:urdf:hide uid=${uid}, model exists:`, !!refs.current._urdfModels?.get(uid))
         const model = refs.current._urdfModels?.get(uid)
         if (model) model.setVisible(false)
       }),
 
       SceneCommandBus.register('scene:urdf:show', async ({ uid, urdfText }) => {
         const model = refs.current._urdfModels?.get(uid)
+        console.log(`[Viewport3D ${panelId}] scene:urdf:show uid=${uid}, model exists:`, !!model)
         if (model) {
           model.setVisible(true)
           return
@@ -1028,12 +1070,73 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       }),
 
       SceneCommandBus.register('scene:urdf:dispose', ({ uid }) => {
+        console.log(`[Viewport3D ${panelId}] scene:urdf:dispose uid=${uid}`)
         const model = refs.current._urdfModels?.get(uid)
         if (model) { model.dispose(); refs.current._urdfModels.delete(uid) }
         refs.current._urdfInflight?.delete(uid)
         refs.current._urdfLoadSeq?.delete(uid)
       }),
+
+      SceneCommandBus.register('scene:urdf:dispose', ({ uid }) => {
+        const model = refs.current._urdfModels?.get(uid)
+        if (model) { model.dispose(); refs.current._urdfModels.delete(uid) }
+        refs.current._urdfInflight?.delete(uid)
+        refs.current._urdfLoadSeq?.delete(uid)
+      }),
+
+      // Restore cached model into a fresh scene, bypassing dedup so the model
+      // is guaranteed to reload even if layout caused a fast remount/unmount cycle.
+      SceneCommandBus.register('scene:urdf:restore', async ({ uid, urdfText }) => {
+        const { rosRoot } = refs.current
+        if (!rosRoot) return
+
+        if (!refs.current._urdfModels) refs.current._urdfModels = new Map()
+        const existing = refs.current._urdfModels.get(uid)
+        if (existing) return  // already loaded, nothing to do
+
+        const { URDFModel } = await import('./urdf_loader/index.js')
+        const model = new URDFModel(rosRoot)
+        refs.current._urdfModels.set(uid, model)
+
+        try {
+          await model.loadFromString(urdfText, null)
+
+          const newLinkNames = model.getLinkNames()
+          const oldLinkNames = refs.current._robotLinkNames?.get(uid)
+          if (oldLinkNames && oldLinkNames.length > 0) {
+            getTfManager().clearRobotFrames(oldLinkNames)
+          }
+          if (!refs.current._robotLinkNames) refs.current._robotLinkNames = new Map()
+          refs.current._robotLinkNames.set(uid, newLinkNames)
+
+          getTfDisplayManager().resetState()
+
+          const rdm = getRosDataManager()
+          if (rdm) {
+            rdm.subscribe('/joint_states', (msg) => {
+              if (!msg?.name || !msg?.position) return
+              msg.name.forEach((jointName, i) => {
+                if (!refs.current._jointSmooth) refs.current._jointSmooth = new Map()
+                let state = refs.current._jointSmooth.get(jointName)
+                if (!state) {
+                  state = { current: msg.position[i], target: msg.position[i] }
+                  refs.current._jointSmooth.set(jointName, state)
+                }
+                state.target = msg.position[i]
+              })
+            })
+          }
+        } catch (e) {
+          console.error('[Viewport3D] scene:urdf:restore error:', e)
+          if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
+        }
+      }),
     ]
+
+    // Restore all cached robot models from DisplayManager into this fresh scene.
+    // This is critical for layout changes that remount Viewport3D — the new instance
+    // needs to reload models without being blocked by the dedup window.
+    getDisplayManager().restoreAllCachedModels()
 
     // 所有 handler 注册完毕，通知其他模块场景已就绪
     setTimeout(() => SceneCommandBus.dispatch({ type: 'scene:ready' }), 0)
@@ -1394,16 +1497,44 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     }
 
     // ── 编辑模式：双击追加点 ────────────────────────────────────────
+    // 左键双击：设置起点（新增轨迹或选中轨迹的起点）
+    // 右键双击：选中轨迹时设置终点
+    const onAuxClick = (e) => {
+      if (e.button !== 2) return
+      if (!window.__ep_editMode) return
+      const now = Date.now()
+      const last = window.__ep_rightClickTime ?? 0
+      const snapped = screenToRos(e.clientX, e.clientY)
+      if (!snapped) return
+      const snappedPt = { x: snapToGrid(snapped.x), y: snapToGrid(snapped.y), z: snapped.z }
+
+      // 检测右键双击（500ms 内连续两次右键点击）
+      if (now - last < 500) {
+        const selectedCount = window.__ep_dragSegs?.length ?? 0
+        if (selectedCount === 1) {
+          window.dispatchEvent(new CustomEvent('toolpanel:editdblclick:end', {
+            detail: snappedPt,
+          }))
+        }
+        window.__ep_rightClickTime = 0
+        return
+      }
+
+      // 单次右键点击：记录时间
+      window.__ep_rightClickTime = now
+    }
+
     const onDblClick = (e) => {
       if (!window.__ep_editMode) return
       const ros = screenToRos(e.clientX, e.clientY)
-      if (ros) {
-        window.dispatchEvent(new CustomEvent('toolpanel:editdblclick', {
-          detail: {
-            rosX: snapToGrid(ros.x), rosY: snapToGrid(ros.y), rosZ: ros.z,
-          },
-        }))
-      }
+      if (!ros) return
+
+      const snapped = { x: snapToGrid(ros.x), y: snapToGrid(ros.y), z: ros.z }
+
+      // 左键双击：设置起点（新增轨迹或选中轨迹的起点）
+      window.dispatchEvent(new CustomEvent('toolpanel:editdblclick', {
+        detail: snapped,
+      }))
     }
 
     const onPlacingChange = () => {
@@ -1428,11 +1559,13 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     window.addEventListener('toolpanel:editmodechange', onPlacingChange)
     dom.addEventListener('pointerdown', onDown)
     dom.addEventListener('dblclick', onDblClick)
+    dom.addEventListener('auxclick', onAuxClick)
     return () => {
       dom.style.cursor = ''
       if (controls) controls.enabled = true
       dom.removeEventListener('pointerdown', onDown)
       dom.removeEventListener('dblclick', onDblClick)
+      dom.removeEventListener('auxclick', onAuxClick)
       window.removeEventListener('toolpanel:placingchange', onPlacingChange)
       window.removeEventListener('toolpanel:editmodechange', onPlacingChange)
     }
