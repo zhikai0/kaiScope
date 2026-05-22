@@ -18,7 +18,9 @@ export class RosConnection extends EventTarget {
 
   _defaultUrl() {
     const host = window.location.hostname || 'localhost'
-    return `ws://${host}:8765`
+    // 使用浏览器地址的端口减 1 作为默认 WebSocket 端口
+    const port = (parseInt(window.location.port, 10) - 1) || 8765
+    return `ws://${host}:${port}`
   }
 
   // ── Public API ────────────────────────────────────────────────────────

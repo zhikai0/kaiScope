@@ -18,6 +18,13 @@ const STATUS_LABEL = {
   disconnected: 'Foxglove',
 }
 
+// 计算默认的 WebSocket URL（浏览器地址端口减 1）
+function getDefaultWsUrl() {
+  const host = window.location.hostname || 'localhost'
+  const port = (parseInt(window.location.port, 10) - 1) || 8765
+  return `ws://${host}:${port}`
+}
+
 export default function TopNav({ editorMode, onToggleEditor, toolMode, onToggleTool, onBack }) {
   const { status, channels, connect, disconnect } = useRos()
   const isConnected = status === 'connected'
@@ -79,7 +86,7 @@ export default function TopNav({ editorMode, onToggleEditor, toolMode, onToggleT
       <button
         className={`tb-connect ${isConnected ? 'connected' : ''} status-${status}`}
         onClick={handleFoxglove}
-        title={isConnected ? '断开 Foxglove Bridge' : '连接 Foxglove Bridge (ws://localhost:8765)'}
+        title={isConnected ? '断开 Foxglove Bridge' : `连接 Foxglove Bridge (${getDefaultWsUrl()})`}
       >
         <span>🔌</span>
         <span>{STATUS_LABEL[status] || 'Foxglove'}</span>

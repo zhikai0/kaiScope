@@ -169,11 +169,18 @@ export default function RobotVisualizer({ onBack }) {
   const addImageLabelCallbackRef = useRef(null)
   const removeImageLabelRef = useRef(null)
 
-  // ToolPanel 点击 "2D GoalPose" 按钮时触发
+  // 全局 TAB 键切换编辑模式
   useEffect(() => {
-    const handler = () => setEditorMode(v => !v)
-    window.addEventListener('toolpanel:toggle-editor', handler)
-    return () => window.removeEventListener('toolpanel:toggle-editor', handler)
+    const handler = (e) => {
+      if (e.key === 'Tab') {
+        // 忽略输入框中的 TAB
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return
+        e.preventDefault()
+        setEditorMode(v => !v)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
   }, [])
 
   const isSingle = countLeaves(layout) === 1

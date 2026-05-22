@@ -433,6 +433,72 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
           })
         })
       }
+
+      // ── 路径拖拽：拖拽状态下用当前鼠标屏幕位置实时计算 ROS 位置 ───────────
+      if (window.__ep_draggingPath && refs.current._mouseScreenPos) {
+        const { renderer, rosRoot, camera } = refs.current
+        if (renderer && camera) {
+          const dom = renderer.domElement
+          const screenPos = refs.current._mouseScreenPos
+          const rect = dom.getBoundingClientRect()
+          const mouse = new THREE.Vector2()
+          mouse.x = ((screenPos.x - rect.left) / rect.width) * 2 - 1
+          mouse.y = -((screenPos.y - rect.top) / rect.height) * 2 + 1
+          
+          const raycaster = new THREE.Raycaster()
+          raycaster.setFromCamera(mouse, camera)
+          const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+          const hit = new THREE.Vector3()
+          if (raycaster.ray.intersectPlane(plane, hit)) {
+            const rosHit = rosRoot ? rosRoot.worldToLocal(hit.clone()) : hit
+            const cell = refs.current._gridCellSize ?? 1
+            const snappedPos = { x: Math.round(rosHit.x / cell) * cell, y: Math.round(rosHit.y / cell) * cell }
+            if (!window.__ep_dragCurrentPos || 
+                window.__ep_dragCurrentPos.x !== snappedPos.x || 
+                window.__ep_dragCurrentPos.y !== snappedPos.y) {
+              window.__ep_dragCurrentPos = snappedPos
+            }
+          }
+        }
+      }
+
+      // ── 路径拖拽：更新选中轨迹的 marker 位置 ───────────────────────────
+      if (window.__ep_draggingPath && window.__ep_dragCurrentPos) {
+        const startPos = window.__ep_dragStartPos
+        const currentPos = window.__ep_dragCurrentPos
+        const dragSegs = window.__ep_dragSegs
+        if (startPos && dragSegs) {
+          const dx = currentPos.x - startPos.x
+          const dy = currentPos.y - startPos.y
+
+          dragSegs.forEach(seg => {
+            const key = `editpath_seg_${seg.id}`
+            const marker = markerManager.get(key)
+            if (!marker) return
+
+            // 更新 Line2 位置
+            if (marker._mesh) {
+              const positions = []
+              seg.points.forEach(p => {
+                positions.push(p.x + dx, p.y + dy, 0)
+              })
+              marker._mesh.geometry.setPositions(positions)
+            }
+
+            // 更新 InstancedMesh 球体位置
+            if (marker._lineMesh) {
+              const dummy = new THREE.Object3D()
+              for (let i = 0; i < seg.points.length; i++) {
+                dummy.position.set(seg.points[i].x + dx, seg.points[i].y + dy, 0)
+                dummy.updateMatrix()
+                marker._lineMesh.setMatrixAt(i, dummy.matrix)
+              }
+              marker._lineMesh.instanceMatrix.needsUpdate = true
+            }
+          })
+        }
+      }
+
       renderer.render(scene, camera)
     }
     animate()
@@ -578,14 +644,15 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       }),
 
       // ── 编辑路径实时预览 — 通过 PathMarker (lineStyle='pointlines') 渲染 ─────
-      SceneCommandBus.register('scene:editpath:update', ({ points = [], previewPts = [], p1, p2, segments = [], editingSegmentId = null }) => {
+      SceneCommandBus.register('scene:editpath:update', ({ points = [], previewPts = [], livePreviewPtsMap = new Map(), p1, p2, segments = [], editingSegmentId = [] }) => {
         const { markerManager, editPathGroup } = refs.current
         if (!markerManager || !editPathGroup) return
 
+        const selected = Array.isArray(editingSegmentId) ? editingSegmentId : []
         const PREVIEW_KEY = 'editpath_preview'
         const Z = 0.05
 
-        // ── 端点 p1/p2：只有当没有轨迹时才显示亮红小球 ──────────────────────
+        // ── 清除旧的端点小球 ──────────────────────────────────────────────────
         editPathGroup.traverse(obj => {
           if (obj.userData?.isEditEndpoint) {
             obj.geometry?.dispose()
@@ -593,7 +660,9 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
           }
         })
         editPathGroup.clear()
-        if (segments.length === 0) {
+
+        // ── 端点 p1/p2：红色小球预览 ─────────────────────────────────────────────
+        if (segments.length === 0 || selected.length > 0) {
           const endSphereGeo = new THREE.SphereGeometry(0.12, 8, 6)
           const endSphereMat = new THREE.MeshBasicMaterial({ color: 0xff2222 })
           const mkEndpoint = (x, y) => {
@@ -606,22 +675,45 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
           if (p2) mkEndpoint(p2.x, p2.y)
         }
 
-        // ── 分段渲染：每个段落一个 marker，选中为红色，其余绿色 ───────────────────────
+        // 拖拽模式下：选中轨迹直接偏移到鼠标位置
+        const dragSegs = window.__ep_draggingPath ? window.__ep_dragSegs : null
+        let dragDx = 0, dragDy = 0
+        if (dragSegs && window.__ep_dragStartPos && window.__ep_dragCurrentPos) {
+          dragDx = window.__ep_dragCurrentPos.x - window.__ep_dragStartPos.x
+          dragDy = window.__ep_dragCurrentPos.y - window.__ep_dragStartPos.y
+          console.log('[渲染] 拖拽中, dx:', dragDx.toFixed(2), 'dy:', dragDy.toFixed(2))
+        }
+
+        // ── 分段渲染：每个段落一个 marker，选中为红色（使用实时预览点），其余绿色 ───────
         segments.forEach((seg, idx) => {
-          const isEditing = seg.id === editingSegmentId
+          const isEditing = selected.includes(seg.id)
           const color = isEditing ? '#ff3030' : '#19ff00'
           const key = `editpath_seg_${seg.id}`
-          const pts = seg.points.map(p => ({ x: p.x, y: p.y, z: 0 }))
+          // 选中轨迹使用实时预览点 livePreviewPtsMap（基于当前参数实时生成）
+          // 其余轨迹使用原始 seg.points
+          let pts
+          const previewPts = isEditing ? livePreviewPtsMap.get(seg.id) : null
+          if (previewPts) {
+            // 有实时预览点时使用预览点
+            pts = previewPts
+          } else {
+            pts = seg.points
+          }
+          // 拖拽时选中轨迹偏移到鼠标位置
+          pts = pts.map(p => {
+            const baseX = p.x, baseY = p.y
+            return { x: baseX + (isEditing && dragSegs ? dragDx : 0), y: baseY + (isEditing && dragSegs ? dragDy : 0), z: 0 }
+          })
           if (pts.length >= 2) {
-            if (!markerManager.get(key)) {
-              markerManager.set(key, 'path', '__preprocessed__', {
-                color,
-                alpha: 1.0,
-                lineStyle: 'pointlines',
-                lineWidth: isEditing ? 3 : 2,
-              })
-            }
-            markerManager.update(key, { points: pts, color, alpha: 1.0, lineWidth: isEditing ? 3 : 2 })
+            // 先删除旧 marker（确保颜色被替换而不是叠加）
+            markerManager.remove(key)
+            markerManager.set(key, 'path', '__preprocessed__', {
+              color,
+              alpha: 1.0,
+              lineStyle: 'pointlines',
+              lineWidth: isEditing ? 3 : 2,
+            })
+            markerManager.update(key, { points: pts })
           }
         })
         // 清理已删除的段落 marker
@@ -651,6 +743,28 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         } else {
           markerManager.remove(PREVIEW_KEY)
         }
+      }),
+
+      // ── 路径拖拽模式：选中轨迹后按 G 键进入拖拽 ─────────────────────────────
+      SceneCommandBus.register('scene:editpath:dragstart', ({ startPos }) => {
+        window.__ep_draggingPath = true
+        window.__ep_dragStartPos = startPos
+      }),
+
+      SceneCommandBus.register('scene:editpath:dragmove', ({ currentPos }) => {
+        window.__ep_dragCurrentPos = currentPos
+      }),
+
+      SceneCommandBus.register('scene:editpath:dragend', ({ endPos }) => {
+        window.__ep_draggingPath = false
+        window.__ep_dragStartPos = null
+        window.__ep_dragCurrentPos = null
+        window.__ep_dragSegs = null
+        const dom = refs.current.renderer?.domElement
+        if (dom) dom.style.cursor = ''
+
+        // 触发 window 事件，让 EditPanel 更新轨迹位置
+        window.dispatchEvent(new CustomEvent('scene:editpath:dragend', { detail: { endPos } }))
       }),
 
       // ── Marker 系统 ─────────────────────────────────────────────────
@@ -1112,7 +1226,6 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     }
 
     window.addEventListener('toolpanel:goalposemodechange', onGoalposeChange)
-    window.addEventListener('toolpanel:editmodechange', onGoalposeChange)
 
     // 交互监听器始终注册，handlers 内部控制是否处理
     dom.addEventListener('pointerdown', onDown)
@@ -1130,7 +1243,114 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       dom.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('toolpanel:goalposemodechange', onGoalposeChange)
-      window.removeEventListener('toolpanel:editmodechange', onGoalposeChange)
+    }
+  }, [])
+
+  // ── Path drag mode: G key to start drag, click to place offset ────────────
+  useEffect(() => {
+    const { renderer, rosRoot, camera, controls } = refs.current
+    if (!renderer) return
+    const dom = renderer.domElement
+
+    const raycaster = new THREE.Raycaster()
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+    const mouse = new THREE.Vector2()
+
+    const screenToRos = (clientX, clientY) => {
+      const rect = dom.getBoundingClientRect()
+      mouse.x = ((clientX - rect.left) / rect.width) * 2 - 1
+      mouse.y = -((clientY - rect.top) / rect.height) * 2 + 1
+      raycaster.setFromCamera(mouse, camera)
+      const hit = new THREE.Vector3()
+      if (!raycaster.ray.intersectPlane(plane, hit)) return null
+      return rosRoot ? rosRoot.worldToLocal(hit.clone()) : hit
+    }
+
+    const snapToGridLocal = (v) => {
+      const cell = refs.current._gridCellSize ?? 1
+      return Math.round(v / cell) * cell
+    }
+
+    // 获取当前鼠标在 ROS 坐标系的吸附后位置
+    const getSnappedMousePos = () => {
+      const mp = refs.current._lastMousePos
+      if (!mp) return null
+      return { x: snapToGridLocal(mp.x), y: snapToGridLocal(mp.y) }
+    }
+
+    const onKeyDown = (e) => {
+      if (e.key.toLowerCase() === 'g' && window.__ep_editMode) {
+        console.log('[拖拽] G键按下, editMode:', window.__ep_editMode)
+        // G 键：轨迹起点跳到鼠标位置
+        const snappedPos = getSnappedMousePos()
+        if (snappedPos && window.__ep_dragSegs && window.__ep_dragSegs.length > 0) {
+          // 用选中轨迹第一个点的位置作为参考点
+          const firstSeg = window.__ep_dragSegs[0]
+          const trajFirstPoint = firstSeg.points[0]
+          console.log('[拖拽] G键按下, 鼠标位置:', snappedPos, '轨迹起点:', trajFirstPoint)
+          
+          // dragStartPos = 轨迹原始起点位置
+          window.__ep_dragStartPos = { x: trajFirstPoint.x, y: trajFirstPoint.y }
+          // dragCurrentPos = 鼠标位置
+          window.__ep_dragCurrentPos = { x: snappedPos.x, y: snappedPos.y }
+          
+          const dx = snappedPos.x - trajFirstPoint.x
+          const dy = snappedPos.y - trajFirstPoint.y
+          console.log('[拖拽] G键计算偏移, dx:', dx.toFixed(2), 'dy:', dy.toFixed(2))
+          
+          // 立即更新轨迹位置（不等待鼠标移动）
+          SceneCommandBus.dispatch({ type: 'scene:editpath:dragmove', currentPos: { x: snappedPos.x, y: snappedPos.y } })
+        }
+        window.__ep_draggingPath = true
+        const dom = renderer.domElement
+        if (dom) dom.style.cursor = 'grabbing'
+      }
+    }
+
+    const onMouseMove = (e) => {
+      const rawPos = screenToRos(e.clientX, e.clientY)
+      if (rawPos) refs.current._lastMousePos = rawPos
+      // 保存屏幕坐标，用于渲染循环中实时计算
+      refs.current._mouseScreenPos = { x: e.clientX, y: e.clientY }
+
+      if (window.__ep_draggingPath) {
+        // 鼠标位置吸附到 grid
+        const pos = rawPos ? { x: snapToGridLocal(rawPos.x), y: snapToGridLocal(rawPos.y) } : null
+
+        // 发送拖拽移动
+        if (pos) {
+          window.__ep_dragCurrentPos = { x: pos.x, y: pos.y }
+          SceneCommandBus.dispatch({ type: 'scene:editpath:dragmove', currentPos: { x: pos.x, y: pos.y } })
+        }
+      }
+    }
+
+    const onMouseUp = (e) => {
+      // 只响应左键（button === 0），右键不触发释放
+      if (e.button !== 0) return
+      if (window.__ep_draggingPath && refs.current._lastMousePos) {
+        // 释放位置也要吸附到 grid
+        const snappedEnd = {
+          x: snapToGridLocal(refs.current._lastMousePos.x),
+          y: snapToGridLocal(refs.current._lastMousePos.y),
+        }
+        console.log('[拖拽] 鼠标松开(吸附后):', snappedEnd)
+        SceneCommandBus.dispatch({ type: 'scene:editpath:dragend', endPos: snappedEnd })
+        window.__ep_draggingPath = false
+        window.__ep_dragStartPos = null
+        const dom = renderer.domElement
+        if (dom) dom.style.cursor = ''
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    dom.addEventListener('pointermove', onMouseMove)
+    window.addEventListener('pointerup', onMouseUp)
+
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      dom.removeEventListener('pointermove', onMouseMove)
+      window.removeEventListener('pointerup', onMouseUp)
     }
   }, [])
 

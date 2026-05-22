@@ -175,7 +175,7 @@ function regenerateSegmentPoints(seg) {
 }
 
 // ── PathTool hooks ────────────────────────────────────────────────────────────
-function usePathTool(state, setState) {
+function usePathTool(editorMode, state, setState) {
   const mgrRef = useRef(null)
   const intervalRef = useRef(null)
   const stateRef = useRef(state)
@@ -229,14 +229,17 @@ function usePathTool(state, setState) {
 
   const {
     segments = [],
-    editingSegmentId = null,
-  } = state
+    editingSegmentId = [],
+  } = state || {}
 
   // 当前正在编辑的段落预览
-  const { p1 = null, p2 = null, curveType = 'arc', curvature = 0, spacing = 1.0 } = state
+  const { p1 = null, p2 = null, curveType = 'arc', curvature = 0, spacing = 1.0 } = state || {}
   // 实际起点：编辑中时用 state.p1，否则用最后一个段落的终点
-  const actualP1 = editingSegmentId ? p1 : (segments.length > 0 ? segments[segments.length - 1].endPt : p1)
+  const selected = Array.isArray(editingSegmentId) ? editingSegmentId : []
+  const actualP1 = selected.length > 0 ? p1 : (segments.length > 0 ? segments[segments.length - 1].endPt : p1)
+  // 选中轨迹时不显示青色预览（previewPts 为空），用户直接在红色选中轨迹上操作，点击重新生成才生效
   const previewPts = (() => {
+    if (selected.length > 0) return []
     if (!actualP1 || !p2) return []
     if (curveType === 'line') {
       return generateLine({ ...actualP1, z: 0 }, { ...p2, z: 0 }, spacing)
@@ -245,34 +248,77 @@ function usePathTool(state, setState) {
     }
   })()
 
+  // 选中轨迹时的实时预览：为每个选中的段落生成独立的预览点
+  const livePreviewPtsMap = (() => {
+    if (selected.length === 0) return new Map()
+    const map = new Map()
+    selected.forEach(segId => {
+      const seg = segments.find(s => s.id === segId)
+      if (!seg) return
+      // 单选时用面板参数实时调节；多选时曲线类型/曲率/端点用各段的原始值，间距统一用面板
+      const curveType_i  = selected.length === 1 ? curveType  : seg.curveType
+      const curvature_i  = selected.length === 1 ? curvature  : seg.curvature
+      const startPt_i    = (selected.length === 1 && p1) ? p1 : seg.startPt
+      const endPt_i      = (selected.length === 1 && p2) ? p2 : seg.endPt
+      const pts = curveType_i === 'line'
+        ? generateLine({ ...startPt_i, z: 0 }, { ...endPt_i, z: 0 }, spacing)
+        : generateArc({ ...startPt_i, z: 0 }, { ...endPt_i, z: 0 }, curvature_i, spacing)
+      map.set(segId, pts)
+    })
+    return map
+  })()
+
   // 计算所有段落的连续点（从第一个段落的起点开始）
-  // 编辑中的段落使用 previewPts（预览新轨迹），其他段落使用原有轨迹
+  // 选中的段落用 livePreviewPtsMap（实时预览），其他段落用原有轨迹
   const allPoints = (() => {
+    if (selected.length > 0 && livePreviewPtsMap.size > 0) {
+      const result = []
+      for (let idx = 0; idx < segments.length; idx++) {
+        const seg = segments[idx]
+        const previewPts = livePreviewPtsMap.get(seg.id)
+        if (previewPts) {
+          // 选中的段落用实时预览点（第一个段落用全部点，后续段落跳过第一个点避免重复）
+          result.push(...(idx === 0 ? previewPts : previewPts.slice(1)))
+        } else {
+          result.push(...(idx === 0 ? seg.points : seg.points.slice(1)))
+        }
+      }
+      return result
+    }
+    // 无选中或无预览点时用原始点
     const result = []
     for (let idx = 0; idx < segments.length; idx++) {
       const seg = segments[idx]
-      if (seg.id === editingSegmentId && previewPts.length > 0) {
-        // 编辑中的段落用预览点
-        result.push(...(idx === 0 ? previewPts : previewPts.slice(1)))
-      } else {
-        result.push(...(idx === 0 ? seg.points : seg.points.slice(1)))
-      }
+      result.push(...(idx === 0 ? seg.points : seg.points.slice(1)))
     }
     return result
   })()
 
-  // 实时预览分发
-  useEffect(() => {
+  // 实时预览分发（仅在编辑模式下派发）
+    useEffect(() => {
+    if (!editorMode) {
+      // 编辑模式退出时清除预览
+      SceneCommandBus.dispatch({
+        type: 'scene:editpath:update',
+        points: [],
+        previewPts: [],
+        livePreviewPtsMap: new Map(),
+        segments: [],
+        editingSegmentId: [],
+      })
+      return
+    }
     SceneCommandBus.dispatch({
       type: 'scene:editpath:update',
       points: allPoints,
       previewPts,
+      livePreviewPtsMap,
       p1: actualP1,
       p2,
       segments,
       editingSegmentId,
     })
-  }, [allPoints, previewPts, actualP1, p2, segments, editingSegmentId])
+  }, [editorMode, allPoints, previewPts, livePreviewPtsMap, actualP1, p2, segments, editingSegmentId])
 
   // 场景双击 → 添加轨迹：已有轨迹时直接设终点，无轨迹时先设起点再设终点
   useEffect(() => {
@@ -297,6 +343,92 @@ function usePathTool(state, setState) {
     return () => window.removeEventListener('toolpanel:editdblclick', handler)
   }, [])
 
+  // Esc 键：取消选中轨迹，还原到"添加新轨迹"状态
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setState(prev => {
+          const lastSeg = prev.segments && prev.segments.length > 0
+            ? prev.segments[prev.segments.length - 1]
+            : null
+          return {
+            ...prev,
+            editingSegmentId: [],
+            p1: lastSeg ? lastSeg.endPt : null,
+            p2: null,
+            _clickedOnce: false,
+          }
+        })
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // 路径拖拽：G 键按下开始拖拽，释放时应用偏移
+  useEffect(() => {
+    // 当选中轨迹改变时，更新全局变量供 Viewport3D 使用
+    if (state.editingSegmentId?.length) {
+      const selectedSegs = state.segments.filter(s => state.editingSegmentId.includes(s.id))
+      window.__ep_dragSegs = selectedSegs
+      window.__ep_dragState = { segments: state.segments, editingSegmentId: state.editingSegmentId }
+    } else {
+      window.__ep_dragSegs = null
+      window.__ep_dragState = null
+    }
+  }, [state.editingSegmentId, state.segments])
+
+  useEffect(() => {
+    const onDragEnd = (e) => {
+      if (!state.editingSegmentId?.length) return
+      const { endPos } = e.detail || {}
+      if (!endPos) return
+
+      // endPos 是用户点击释放的位置（新的起点位置）
+      // 计算相对于原始起点的偏移
+      const selectedSeg = state.segments.find(s => state.editingSegmentId.includes(s.id))
+      if (!selectedSeg) return
+
+      const dx = endPos.x - selectedSeg.startPt.x
+      const dy = endPos.y - selectedSeg.startPt.y
+
+      // 应用偏移到所有选中的段落，并同步面板 p1/p2
+      setState(prev => {
+        const selected = Array.isArray(prev.editingSegmentId) ? prev.editingSegmentId : []
+        let newP1 = prev.p1
+        let newP2 = prev.p2
+        return {
+          ...prev,
+          segments: prev.segments.map(seg => {
+            if (selected.includes(seg.id)) {
+              if (newP1 && seg.startPt) {
+                newP1 = { x: seg.startPt.x + dx, y: seg.startPt.y + dy, z: 0 }
+              }
+              if (newP2 && seg.endPt) {
+                newP2 = { x: seg.endPt.x + dx, y: seg.endPt.y + dy, z: 0 }
+              }
+              return {
+                ...seg,
+                points: seg.points.map(p => ({ x: p.x + dx, y: p.y + dy, z: p.z || 0 })),
+                startPt: { x: seg.startPt.x + dx, y: seg.startPt.y + dy, z: 0 },
+                endPt:   { x: seg.endPt.x + dx,   y: seg.endPt.y + dy,   z: 0 },
+              }
+            }
+            return seg
+          }),
+          p1: newP1,
+          p2: newP2,
+        }
+      })
+    }
+
+    window.addEventListener('scene:editpath:dragend', onDragEnd)
+
+    return () => {
+      window.removeEventListener('scene:editpath:dragend', onDragEnd)
+    }
+  }, [state.editingSegmentId, state.segments, setState])
+
   return { startPublish, stopPublish, allPoints }
 }
 
@@ -320,8 +452,11 @@ function PathToolUI({ state, setState, startPublish, stopPublish }) {
     curvature = 0,
     spacing = 1.0,
     publishing = false,
-    editingSegmentId = null,
-  } = state
+    editingSegmentId = [],
+  } = state || {}
+
+  // 安全处理 editingSegmentId（兼容旧数据）
+  const selected = Array.isArray(editingSegmentId) ? editingSegmentId : []
 
   // 所有段落合并后的路径点
   const allPoints = segments.flatMap((seg, idx) => {
@@ -330,7 +465,7 @@ function PathToolUI({ state, setState, startPublish, stopPublish }) {
   })
 
   // 实际起点：编辑中时用 state.p1，否则用最后一个段落的终点
-  const actualP1 = editingSegmentId ? p1 : (segments.length > 0 ? segments[segments.length - 1].endPt : p1)
+  const actualP1 = selected.length > 0 ? p1 : (segments.length > 0 ? segments[segments.length - 1].endPt : p1)
 
   const set = updater => setState(updater)
 
@@ -346,63 +481,79 @@ function PathToolUI({ state, setState, startPublish, stopPublish }) {
   const removeSegment = segId => set(prev => ({
     ...prev,
     segments: prev.segments.filter(s => s.id !== segId),
-    editingSegmentId: prev.editingSegmentId === segId ? null : prev.editingSegmentId,
+    editingSegmentId: (prev.editingSegmentId || []).filter(id => id !== segId),
   }))
 
   // 清空所有段落
   const clearPoints = () => {
     if (publishing) stopPublish()
-    setState(prev => ({ ...prev, segments: [], p1: null, p2: null, _clickedOnce: false, editingSegmentId: null }))
+    setState(prev => ({ ...prev, segments: [], p1: null, p2: null, _clickedOnce: false, editingSegmentId: [] }))
   }
 
-  // 选择/取消选择段落进行编辑
+  // 检查段落是否被选中
+  const isSelected = segId => (state.editingSegmentId || []).includes(segId)
+
+  // 选择/取消选择段落进行编辑（支持多选）
   const selectSegment = segId => set(prev => {
-    const wasEditing = prev.editingSegmentId === segId
-    if (wasEditing) {
-      // 取消编辑：还原到添加新轨迹状态
-      // 起点 = 最后一个段落的终点，终点 = 空
-      const lastSeg = prev.segments.length > 0 ? prev.segments[prev.segments.length - 1] : null
-      return {
-        ...prev,
-        editingSegmentId: null,
-        p1: lastSeg ? lastSeg.endPt : null,
-        p2: null,
-        curvature: prev.curvature,
-        spacing: prev.spacing,
-        curveType: prev.curveType,
+    const current = prev.editingSegmentId || []
+    const isCurrentlySelected = current.includes(segId)
+    
+    if (isCurrentlySelected) {
+      // 取消选中：只有取消后没有选中项时才还原状态
+      const newSelected = current.filter(id => id !== segId)
+      if (newSelected.length === 0) {
+        // 没有选中了，还原到添加新轨迹状态
+        const lastSeg = prev.segments.length > 0 ? prev.segments[prev.segments.length - 1] : null
+        return {
+          ...prev,
+          editingSegmentId: [],
+          p1: lastSeg ? lastSeg.endPt : null,
+          p2: null,
+          curvature: prev.curvature,
+          spacing: prev.spacing,
+          curveType: prev.curveType,
+        }
       }
+      return { ...prev, editingSegmentId: newSelected }
     }
-    // 选择编辑：加载该段落的参数
+    
+    // 新增选中：加载该段落的参数到编辑区
     const seg = prev.segments.find(s => s.id === segId)
+    const hasExisting = current.length > 0
     return {
       ...prev,
-      editingSegmentId: segId,
+      editingSegmentId: [...current, segId],
       curveType: seg?.curveType ?? prev.curveType,
       curvature: seg?.curvature ?? prev.curvature,
       spacing: seg?.spacing ?? prev.spacing,
-      p1: seg?.startPt ?? prev.p1,
-      p2: seg?.endPt ?? prev.p2,
+      // 多选时保持现有 p1/p2 不变，避免 livePreviewPtsMap 抖动
+      p1: hasExisting ? prev.p1 : (seg?.startPt ?? prev.p1),
+      p2: hasExisting ? prev.p2 : (seg?.endPt ?? prev.p2),
     }
   })
 
-  // 重新生成选中段落的点
+  // 重新生成所有选中段落的点
   const regenerateEditingSegment = () => set(prev => {
-    if (!prev.editingSegmentId) return prev
+    const selected = prev.editingSegmentId || []
+    if (selected.length === 0) return prev
     const lastSeg = prev.segments.length > 0 ? prev.segments[prev.segments.length - 1] : null
     return {
       ...prev,
-      editingSegmentId: null,
+      editingSegmentId: [],
       segments: prev.segments.map(seg => {
-        if (seg.id !== prev.editingSegmentId) return seg
-        const startPt = prev.p1 ?? seg.startPt
-        const endPt = prev.p2 ?? seg.endPt
+        if (!selected.includes(seg.id)) return seg
+        // 单选时用面板参数，多选时 curveType/curvature/端点用各段的原始值，间距统一用面板
+        const startPt    = (selected.length === 1 && prev.p1) ? prev.p1 : seg.startPt
+        const endPt      = (selected.length === 1 && prev.p2) ? prev.p2 : seg.endPt
+        const curveType_i = selected.length === 1 ? prev.curveType : seg.curveType
+        const curvature_i = selected.length === 1 ? prev.curvature : seg.curvature
         const regenerated = {
           ...seg,
-          curveType: prev.curveType,
-          curvature: prev.curvature,
-          spacing: prev.spacing,
+          curveType: curveType_i,
+          curvature: curvature_i,
+          spacing:   prev.spacing,
           startPt: { ...startPt },
-          endPt: { ...endPt },
+          endPt:   { ...endPt },
         }
         return regenerateSegmentPoints(regenerated)
       }),
@@ -461,30 +612,31 @@ function PathToolUI({ state, setState, startPublish, stopPublish }) {
         <input className="ep-input" value={frameId} onChange={e => set(s => ({ ...s, frameId: e.target.value }))}/>
       </div>
 
-      {/* 曲线类型 */}
+      {/* 曲线类型：单选时可切换，多选时禁用 */}
       <div className="ep-curve-type-row">
         {['line', 'arc'].map(t => (
           <button
             key={t}
             className={`ep-curve-btn ${curveType === t ? 'active' : ''}`}
             onClick={() => set(s => ({ ...s, curveType: t }))}
+            disabled={selected.length > 1}
           >
             {t === 'line' ? '直线' : '圆弧'}
           </button>
         ))}
       </div>
 
-      {/* P1 / P2 坐标 */}
+      {/* P1 / P2 坐标：单选时可编辑，多选时禁用 */}
       <div className="ep-two-pt-row">
         <div className="ep-pt-group">
           <div className="ep-pt-label">起点</div>
           <div className="ep-pt-fields">
             <label>X<input type="number" value={actualP1?.x ?? ''} step={0.5}
               onChange={e => set(s => ({ ...s, p1: { ...s.p1, x: +e.target.value } }))}
-              disabled={!editingSegmentId}/></label>
+              disabled={selected.length !== 1}/></label>
             <label>Y<input type="number" value={actualP1?.y ?? ''} step={0.5}
               onChange={e => set(s => ({ ...s, p1: { ...s.p1, y: +e.target.value } }))}
-              disabled={!editingSegmentId}/></label>
+              disabled={selected.length !== 1}/></label>
           </div>
         </div>
         <div className="ep-pt-group">
@@ -492,20 +644,21 @@ function PathToolUI({ state, setState, startPublish, stopPublish }) {
           <div className="ep-pt-fields">
             <label>X<input type="number" value={p2?.x ?? ''} step={0.5}
               onChange={e => set(s => ({ ...s, p2: { ...s.p2, x: +e.target.value } }))}
-              disabled={!editingSegmentId}/></label>
+              disabled={selected.length !== 1}/></label>
             <label>Y<input type="number" value={p2?.y ?? ''} step={0.5}
               onChange={e => set(s => ({ ...s, p2: { ...s.p2, y: +e.target.value } }))}
-              disabled={!editingSegmentId}/></label>
+              disabled={selected.length !== 1}/></label>
           </div>
         </div>
       </div>
 
-      {/* 曲率 */}
+      {/* 曲率：单选时可调，多选时禁用 */}
       <div className="ep-field-row">
         <span className="ep-label">曲率 κ</span>
         <input type="range" className="ep-range"
           min={-1} max={1} step={0.05}
           value={curvature}
+          disabled={selected.length > 1}
           onChange={e => set(s => ({ ...s, curvature: +e.target.value }))}/>
         <span className="ep-range-val">{curvature.toFixed(2)}</span>
       </div>
@@ -521,9 +674,9 @@ function PathToolUI({ state, setState, startPublish, stopPublish }) {
       </div>
 
       <div className="ep-field-row ep-add-row">
-        {editingSegmentId ? (
+        {selected.length > 0 ? (
           <button className="ep-btn ep-btn-secondary" onClick={regenerateEditingSegment}>
-            ✓ 重新生成
+            ✓ 重新生成 ({selected.length})
           </button>
         ) : (
           <button
@@ -545,7 +698,7 @@ function PathToolUI({ state, setState, startPublish, stopPublish }) {
       <div className="ep-points-list">
         {segments.length === 0 && <div className="ep-empty-hint">双击场景放置起点和终点，生成轨迹</div>}
         {segments.map((seg, idx) => {
-          const isEditing = editingSegmentId === seg.id
+          const isEditing = selected.includes(seg.id)
           return (
             <div key={seg.id} className={`ep-segment-item ${isEditing ? 'editing' : ''}`}>
               <div className="ep-segment-header" onClick={() => selectSegment(seg.id)}>
@@ -600,7 +753,7 @@ const EDIT_TOOLS = [
       curvature: 0,
       spacing: 1.0,
       _clickedOnce: false,
-      editingSegmentId: null,
+      editingSegmentId: [],
     },
     renderPanel: PathToolUI,
   },
@@ -665,7 +818,7 @@ export default function EditPanel({ editorMode, onClose }) {
   // 否则 editorMode 切换时 Hook 顺序会变，触发 React 崩溃
   const tool = EDIT_TOOLS.find(t => t.id === activeTool)
   const state = tool ? toolStates[activeTool] : null
-  const { startPublish, stopPublish } = usePathTool(state, setState)
+  const { startPublish, stopPublish } = usePathTool(editorMode, state, setState)
 
   // ── 同步编辑模式状态到 window ─────────────────────────────────
   useEffect(() => {
