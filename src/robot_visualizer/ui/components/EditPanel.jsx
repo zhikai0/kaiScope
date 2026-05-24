@@ -782,7 +782,7 @@ const EDIT_TOOLS = [
   {
     id: 'path',
     label: '路径',
-    icon: '🛤️',
+    icon: '〰',
     description: '生成和编辑导航路径',
     defaultState: {
       segments: [],
@@ -866,11 +866,11 @@ export default function EditPanel({ editorMode, onClose }) {
     window.__ep_editMode = editorMode
     window.dispatchEvent(new CustomEvent('toolpanel:editmodechange'))
     if (!editorMode) {
-      SceneCommandBus.dispatch({ type: 'scene:editpath:update', points: [], previewPts: [], segments: [] })
+      SceneCommandBus.dispatch({ type: 'scene:editpath:update', points: [], previewPts: [], livePreviewPtsMap: new Map(), segments: [], editingSegmentId: [] })
     } else {
-      const { segments = [] } = state || {}
+      const { segments = [], editingSegmentId = [], p1 = null } = state || {}
       const allPoints = segments.flatMap((seg, idx) => idx === 0 ? seg.points : seg.points.slice(1))
-      SceneCommandBus.dispatch({ type: 'scene:editpath:update', points: allPoints, previewPts: [], segments })
+      SceneCommandBus.dispatch({ type: 'scene:editpath:update', points: allPoints, previewPts: [], livePreviewPtsMap: new Map(), segments, editingSegmentId, p1 })
     }
   }, [editorMode])
 
