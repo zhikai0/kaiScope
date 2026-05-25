@@ -86,6 +86,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     if (!mount || !wrap) return
 
     const el = mount
+    let isActive = true
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     renderer.setSize(el.clientWidth, el.clientHeight)
@@ -951,6 +952,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
 
       // ── URDF 模型加载/销毁 ────────────────────────────────────────
       SceneCommandBus.register('scene:urdf:load', async ({ uid, urdfText, fileMap }) => {
+        if (!isActive) return
         const { rosRoot } = refs.current
         if (!rosRoot) { console.log('[Viewport3D] no rosRoot, skipping'); return }
 
@@ -990,6 +992,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
 
         console.log('[Viewport3D] creating URDFModel')
         const { URDFModel } = await import('./urdf_loader/index.js')
+        if (!isActive) return
         if (!refs.current._urdfModels) refs.current._urdfModels = new Map()
         const existing = refs.current._urdfModels.get(uid)
         if (existing) existing.dispose()
@@ -1000,6 +1003,11 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         try {
           console.log('[Viewport3D] calling model.loadFromString')
           await model.loadFromString(urdfText, fileMap)
+          if (!isActive) {
+            model.dispose()
+            if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
+            return
+          }
           console.log('[Viewport3D] loadFromString complete, _root visible:', model._root?.visible)
 
           const latestSeq = refs.current._urdfLoadSeq.get(uid)
@@ -1051,12 +1059,14 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       }),
 
       SceneCommandBus.register('scene:urdf:hide', ({ uid }) => {
+        if (!isActive) return
         console.log(`[Viewport3D ${panelId}] scene:urdf:hide uid=${uid}, model exists:`, !!refs.current._urdfModels?.get(uid))
         const model = refs.current._urdfModels?.get(uid)
         if (model) model.setVisible(false)
       }),
 
       SceneCommandBus.register('scene:urdf:show', async ({ uid, urdfText }) => {
+        if (!isActive) return
         const model = refs.current._urdfModels?.get(uid)
         console.log(`[Viewport3D ${panelId}] scene:urdf:show uid=${uid}, model exists:`, !!model)
         if (model) {
@@ -1070,14 +1080,8 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       }),
 
       SceneCommandBus.register('scene:urdf:dispose', ({ uid }) => {
+        if (!isActive) return
         console.log(`[Viewport3D ${panelId}] scene:urdf:dispose uid=${uid}`)
-        const model = refs.current._urdfModels?.get(uid)
-        if (model) { model.dispose(); refs.current._urdfModels.delete(uid) }
-        refs.current._urdfInflight?.delete(uid)
-        refs.current._urdfLoadSeq?.delete(uid)
-      }),
-
-      SceneCommandBus.register('scene:urdf:dispose', ({ uid }) => {
         const model = refs.current._urdfModels?.get(uid)
         if (model) { model.dispose(); refs.current._urdfModels.delete(uid) }
         refs.current._urdfInflight?.delete(uid)
@@ -1087,6 +1091,7 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       // Restore cached model into a fresh scene, bypassing dedup so the model
       // is guaranteed to reload even if layout caused a fast remount/unmount cycle.
       SceneCommandBus.register('scene:urdf:restore', async ({ uid, urdfText }) => {
+        if (!isActive) return
         const { rosRoot } = refs.current
         if (!rosRoot) return
 
@@ -1095,11 +1100,17 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
         if (existing) return  // already loaded, nothing to do
 
         const { URDFModel } = await import('./urdf_loader/index.js')
+        if (!isActive) return
         const model = new URDFModel(rosRoot)
         refs.current._urdfModels.set(uid, model)
 
         try {
           await model.loadFromString(urdfText, null)
+          if (!isActive) {
+            model.dispose()
+            if (refs.current._urdfModels.get(uid) === model) refs.current._urdfModels.delete(uid)
+            return
+          }
 
           const newLinkNames = model.getLinkNames()
           const oldLinkNames = refs.current._robotLinkNames?.get(uid)
@@ -1136,12 +1147,20 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
     // Restore all cached robot models from DisplayManager into this fresh scene.
     // This is critical for layout changes that remount Viewport3D — the new instance
     // needs to reload models without being blocked by the dedup window.
-    getDisplayManager().restoreAllCachedModels()
+    // Delay 50ms to ensure the old scene's handlers have been unregistered (cleanup is async).
+    const restoreTimer = setTimeout(() => {
+      if (isActive) getDisplayManager().restoreAllCachedModels()
+    }, 50)
 
     // 所有 handler 注册完毕，通知其他模块场景已就绪
-    setTimeout(() => SceneCommandBus.dispatch({ type: 'scene:ready' }), 0)
+    const readyTimer = setTimeout(() => {
+      if (isActive) SceneCommandBus.dispatch({ type: 'scene:ready' })
+    }, 0)
 
     return () => {
+      isActive = false
+      clearTimeout(restoreTimer)
+      clearTimeout(readyTimer)
       persistedState.current.cameraPos = refs.current.camera?.position?.clone?.() || null
       persistedState.current.cameraTarget = refs.current.controls?.target?.clone?.() || null
       persistedState.current.viewMode = refs.current._viewMode || viewMode
@@ -1153,6 +1172,20 @@ export default function Viewport3D({ panelId = 'main-3d', editorMode = false, on
       cleanupImportedCloudDrop()
       cleanupURDFDrop?.()
       refs.current.editPathGroup?.clear()
+
+      // 清理所有 URDF 模型（在 unregs 之前执行，确保 handler 还能响应 dispose 命令）
+      if (refs.current._urdfModels) {
+        refs.current._urdfModels.forEach((model, uid) => {
+          console.log(`[Viewport3D cleanup] disposing URDF model uid=${uid}`)
+          model.dispose()
+        })
+        refs.current._urdfModels.clear()
+      }
+      refs.current._urdfInflight?.clear()
+      refs.current._urdfLoadSeq?.clear()
+      refs.current._urdfCache?.clear()
+      refs.current._urdfTextDedup?.clear()
+
       unregs.forEach(fn => fn())
       refs.current.markerManager?.dispose()
       refs.current.mapLayer?.dispose()
